@@ -3011,7 +3011,7 @@ selfcheck () {
     done
 
     ### check commands with alternatives, first find used first
-    _cmdlist="netstat:ss"
+    _cmdlist="ss:netstat"
     for _alt in $_cmdlist; do
 	_cmd=${_alt%:*}
 	_alt=${_alt#*:}
@@ -3025,7 +3025,7 @@ selfcheck () {
 		_rc=1
 	    fi
 	}
-	eval $_cmd=$_file
+	netstat="$_file"
     done
     return $_rc
 }
@@ -3246,7 +3246,6 @@ else
 		}
 	    }
 	    remotes () {
-		echo net-tools
 		$netstat -n ${1:--t -u} --protocol=${2:-inet,inet6} | {
 		    read _; read _; ntstrm;
 		}
