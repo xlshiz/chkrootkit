@@ -122,6 +122,13 @@ int fetchps(struct ps_line *psl_p)
                    fgets(line, MAXREAD, ps_fp);
                    line_length = strlen(line); 
                 } 
+            }
+            /* if we didn't read the line, skip the rest */
+            line_length = strlen(line);
+            while (!(line_length == 0 || line[line_length -1] == '\n')) {
+               fgets(line, MAXREAD, ps_fp);
+               line_length = strlen(line);
+
 	    }
 	}
 	pclose(ps_fp);

@@ -1,14 +1,14 @@
 Begin3
 Title:          Chkrootkit
-Version:        0.53-github2
-Entered-date:   Mon Apr 29 12:45:21 CET 2019
+Version:        0.58
+Entered-date:   Wed Jun 9 13:31:45 BRT 2021
 Description:    locally checks for signs of a rootkit
 Keywords:       rootkit check vulnerability unix LKM Ramen Lion Worn Adore Worm
-Author:         Nelson Murilo <nelson@pangeia.com.br>
+Author:         Nelson Murilo <nmurilo@gmail.com>
 Maintained-by:  Nelson Murilo, Klaus Steding-Jessen <jessen@cert.br>
 Primary-site:   http://www.chkrootkit.org
-Alternate-site: ftp://ftp.pangeia.com.br/pub/seg/pac/
+Alternate-site: ftp://ftp.chkrootkit.org/pub/seg/pac/
 Original-site:
-Platform:       Linux, FreeBSD, OpenBSD, NetBSD, Sun/Solaris, HPUX, BSDI, TRU64, Mac OS X
+Platform:       Linux, FreeBSD, OpenBSD, NetBSD, Sun/Solaris, HPUX, BSDI, AIX, TRU64, Mac OS X
 Copying-policy: AMS
 End

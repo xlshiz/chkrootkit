@@ -1,10 +1,10 @@
 #
 # Makefile for chkrootkit
-# (C) 1997-2007 Nelson Murilo, Pangeia Informatica, AMS Foundation and others.
+# (C) 1997-2025 Nelson Murilo, Pangeia Informatica, AMS Foundation and others.
 #
 
-CC       = cc
-CFLAGS	 = -DHAVE_LASTLOG_H
+CC       ?= cc
+CFLAGS	 += -DHAVE_LASTLOG_H
 STATIC   = -static
 
 ###
@@ -20,7 +20,7 @@ STATIC   = -static
 ### Mac OS X
 ###
 # If you have Mac OS X, uncomment the next line
-#STATIC = -B static
+#STATIC =
 
 ###
 ### FreeBSD or OpenBSD 2.x
@@ -48,8 +48,10 @@ chkwtmp:   chkwtmp.c
 	@strip $@
 
 ifpromisc:   ifpromisc.c
-	${CC} ${CFLAGS} ${LDFLAGS}  -D_FILE_OFFSET_BITS=64 -o $@ ifpromisc.c
-	@strip $@
+	@if [ -f "/usr/include/linux/if.h" ]; then \
+		${CC} ${CFLAGS} ${LDFLAGS}  -D_FILE_OFFSET_BITS=64 -o $@ ifpromisc.c ; \
+		strip $@ ;\
+	fi
 
 chkproc:   chkproc.c
 	${CC} ${LDFLAGS} -o $@ chkproc.c

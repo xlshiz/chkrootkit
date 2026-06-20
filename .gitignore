@@ -1,0 +1,15 @@
+# Compiled binaries
+chkdirs
+chklastlog
+chkproc
+chkutmp
+chkwtmp
+check_wtmpx
+ifpromisc
+strings-static
+
+# Object files
+*.o
+
+# Core dumps
+core

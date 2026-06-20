@@ -90,10 +90,10 @@ int main (){ return 0; }
 #else
 #define FIRST_PROCESS 1
 #endif
-#define MAX_PROCESSES 999999 
-#if defined (__x86_64) > 0 
+#define MAX_PROCESSES 9999999 
+#if (defined (__x86_64) > 0  || defined (__amd64) > 0) 
 #undef MAX_PROCESSES
-#define MAX_PROCESSES 4194384
+#define MAX_PROCESSES 4194304
 #endif
 #define MAX_BUF 1024
 
@@ -156,7 +156,8 @@ int main(int argc, char **argv)
    psinfo_t psbuf;
 #endif
 
-   pv = verbose = 0;
+   verbose = 0;
+   pv = 3;
 
    if (!proc)
    {

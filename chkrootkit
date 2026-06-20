@@ -1,14 +1,17 @@
 #! /bin/sh
 # -*- Shell-script -*-
 
-# $Id: chkrootkit, v 0.53-github2 2019/04/29
-CHKROOTKIT_VERSION='0.53-github2' 
+# $Id: chkrootkit, v 0.59 2026/01/01 
+CHKROOTKIT_VERSION='0.59' 
 
-# Authors: Nelson Murilo <nelson@pangeia.com.br> (main author) and
+# Authors: Nelson Murilo <nmurilo@gmail.com> (main author) and
 #          Klaus Steding-Jessen <jessen@cert.br>
 #
-# (c)1997-2019 Nelson Murilo, Pangeia Informatica, AMS Foundation and others.
+# (c)1997-2026 Nelson Murilo, AMS Foundation and others.
 # All rights reserved
+#
+# Georg Lehner, leg20250909, bindshell and chk_tcpdump rewrite to
+#          accommodate different netstat implementations.
 
 ### workaround for some Bourne shell implementations
 unalias login > /dev/null 2>&1
@@ -17,6 +20,8 @@ unalias netstat > /dev/null 2>&1
 unalias ss > /dev/null 2>&1
 unalias ps > /dev/null 2>&1
 unalias dirname > /dev/null 2>&1
+
+egrep='grep -E'
 
 # Workaround for recent GNU coreutils
 _POSIX2_VERSION=199209
@@ -28,7 +33,7 @@ KALLSYMS="/proc/kallsyms"
 # Native commands
 TROJAN="amd basename biff chfn chsh cron crontab date du dirname echo egrep \
 env find fingerd gpm grep hdparm su ifconfig inetd inetdconf identd init \
-killall  ldsopreload login ls lsof mail mingetty netstat named passwd pidof \
+killall  ldsopreload login ls lsof mail mingetty named netstat nologin passwd pidof \
 pop2 pop3 ps pstree rpcinfo rlogind rshd slogin sendmail sshd syslogd tar tcpd \
 tcpdump top telnetd timed traceroute vdir w write"
 
@@ -44,6 +49,9 @@ INFECTED_BUT_DISABLED=4
 
 # Many trojaned commands have this label
 GENERIC_ROOTKIT_LABEL="^/bin/.*sh$|bash|elite$|vejeta|\.ark|iroffer"
+
+## BUSYBOX CHECK 
+BUSYBOX=""
 
 ######################################################################
 # tools functions
@@ -102,19 +110,27 @@ slapper (){
    SLAPPER_FILES="${ROOTDIR}tmp/.bugtraq ${ROOTDIR}tmp/.bugtraq.c"
    SLAPPER_FILES="$SLAPPER_FILES ${ROOTDIR}tmp/.unlock ${ROOTDIR}tmp/httpd \
    ${ROOTDIR}tmp/update ${ROOTDIR}tmp/.cinik ${ROOTDIR}tmp/.b"
-   SLAPPER_PORT="0.0:2002 |0.0:4156 |0.0:1978 |0.0:1812 |0.0:2015 "
-   _chk_netstat_or_ss; 
-   OPT="-an" 
-   [ "${netstat}" = "ss" ] && OPT="-a" 
+   SLAPPER_PORT="
+2002
+4156
+1978
+1812
+2015
+"
    STATUS=0
-   file_port=
 
-   if ${netstat} "${OPT}"|${egrep} "^tcp"|${egrep} "${SLAPPER_PORT}"> /dev/null 2>&1
-      then
-      STATUS=1
-      [ "$SYSTEM" = "Linux" ] && file_port=`netstat -p ${OPT} | \
-         $egrep ^tcp|$egrep "${SLAPPER_PORT}" | ${awk} '{ print  $7 }' | tr -d :`
-   fi
+   file_port=
+   # leg20250906
+   # Note: the original check restricts to tcp ports on *0.0:${SLAPPER_PORT}
+   #   This would not work on all platforms.
+   #   However it is more restricted then current localports() which allows any
+   #   locally listen port on ipv4, ipv6, udp and tcp.
+   # Note: If I understand correctly, only in Linux the slapper port is reported.
+   #       Why do we check on other platforms then?
+   local _ports
+   _ports="$(localports | grep -xF -e "$SLAPPER_PORT")"
+   [ "$_ports" ] && STATUS=1
+   [ "$_ports" -a "$SYSTEM" = "Linux" ] && file_port="$_ports"
    for i in ${SLAPPER_FILES}; do
       if [ -f ${i} ]; then
 	 file_port="$file_port $i" 
@@ -132,14 +148,16 @@ slapper (){
 scalper (){
    SCALPER_FILES="${ROOTDIR}tmp/.uua ${ROOTDIR}tmp/.a"
    SCALPER_PORT=2001
-   OPT="-an" 
-   _chk_netstat_or_ss; 
-   [ "$netstat" = "ss" ] && OPT="-a" 
    STATUS=0
 
-   if ${netstat} "${OPT}" | ${egrep} "0.0:${SCALPER_PORT} "> /dev/null 2>&1; then
-      STATUS=1
-   fi
+   if [ "${EXPERT}" = "t" ]; then
+       expertmode_output localports
+       return 5
+    fi  
+
+   # leg20250906
+   [ "$(localports | grep -xF -e "$SCALPER_PORT")" ] && STATUS=1
+
    for i in ${SCALPER_FILES}; do
       if [ -f ${i} ]; then
          STATUS=1
@@ -277,33 +295,58 @@ wted () {
     fi
 }
 bindshell () {
-PORT="114|145|465|511|600|1008|1524|1999|1978|2881|3049|3133|3879|4000|4369|5190|5665|6667|10008|12321|23132|27374|29364|30999|31336|31337|37998|45454|47017|47889|60001|7222"
-   OPT="-an" 
-   _chk_netstat_or_ss; 
-   [ "$netstat" = "ss" ] && OPT="-a"  
-   PI=""
-   if [ "${ROOTDIR}" != "/" ]; then
-     echo "not tested"
-     return ${NOT_TESTED}
-   fi
-
-   if [ "${EXPERT}" = "t" ]; then
-       expertmode_output "${netstat} ${OPT}"
-       return 5
-   fi
-   for P in `echo $PORT | ${sed} 's/|/ /g'`; do
-      if ${netstat} "${OPT}" | ${egrep} "^tcp.*LIST|^udp" | ${egrep} \
-"[.:]${P}[^0-9.:]" >/dev/null 2>&1
-      then
-         PI="${PI} ${P}"
-      fi
-   done
-   if [ "${PI}" != "" ]
-   then
-      echo "INFECTED PORTS: ($PI)"
-   else
-      if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
-   fi
+    PORT="114
+145
+465
+511
+600
+1008
+1524
+1999
+1978
+2881
+3049
+3133
+3879
+4000
+4369
+5190
+5665
+6667
+10008
+12321
+23132
+27374
+29364
+30999
+31336
+31337
+37998
+45454
+47017
+47889
+60001
+7222
+"
+    if [ "${ROOTDIR}" != "/" ]; then
+	echo "not tested"
+	return ${NOT_TESTED}
+    fi
+    
+    if [ "${EXPERT}" = "t" ]; then
+	expertmode_output localports
+	return 5
+    fi
+   
+    LOCALPORTS="$(localports)"
+    # set intersection courtesy https://catonmat.net/ftp/setops.txt
+    PI="$(localports | grep -xF -e "$PORTS")"
+    if [ "${PI}" != "" ]
+    then
+	echo "INFECTED PORTS: ($PI)"
+    else
+	if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+    fi
 }
 
 lkm ()
@@ -311,7 +354,7 @@ lkm ()
     prog=""
     if [  \( "${SYSTEM}" = "Linux"  -o \( "${SYSTEM}" = "FreeBSD" -a \
        `echo ${V} | ${awk} '{ if ($1 > 4.3 || $1 < 6.0) print 1; else print 0 }'` -eq 1 \) \) -a "${ROOTDIR}" = "/" ]; then
-       [  -x ./chkproc -a "`find /proc 2>/dev/null| wc -l`" -gt 1 ] && prog="./chkproc"
+       [  -x ./chkproc -a "`find /proc -maxdepth 1 2>/dev/null| wc -l`" -gt 1 ] && prog="./chkproc"
       [  -x ./chkdirs ] && prog="$prog ./chkdirs"
       if [ "$prog" = "" -o ${mode} = "pm" ]; then
          echo "not tested: can't exec $prog"
@@ -344,8 +387,10 @@ lkm ()
       if [ -d /proc/knark ]; then
          echo "Warning: Knark LKM installed"
       fi
-
-      PV=`$ps -V 2>/dev/null| $cut -d " " -f 3 |${awk} -F . '{ print $1 "." $2 $3 }' | ${awk} '{ if ($0 > 3.19) print 3; else if ($0 < 2.11) print 1; else print 2 }'`
+      if [ "$SYSTEM" = "Linux" ]; then 
+         F=`$ps -V 2>/dev/null | wc -w`
+         PV=`$ps -V 2>/dev/null| $cut -d " " -f $F |${awk} -F . '{ print $1 "." $2 $3 }' | ${awk} '{ if ($0 > 3.19) print 3; else if ($0 < 2.11) print 1; else print 2 }'`
+      fi 
       [ "$PV" = "" ] &&  PV=2
       [ "${SYSTEM}" = "SunOS" ] && PV=0
       if [ "${DEBUG}" = "t" ]; then
@@ -358,7 +403,9 @@ lkm ()
       fi
       dirs="/tmp"
       for i in /usr/share /usr/bin /usr/sbin /lib; do
-         [ -d $i ] && dirs="$dirs $i"
+         if [ "$(ls -ld $i | tr -s " " | cut -d " " -f 2)" -gt "1" ]; then 
+            [ -d $i ] && dirs="$dirs $i"
+         fi 
       done
       if ./chkdirs $dirs;  then
          if [ "${QUIET}" != "t" ]; then echo "chkdirs: nothing detected"; fi
@@ -372,6 +419,8 @@ lkm ()
 
 aliens () {
    if [ "${EXPERT}" = "t" ]; then
+        ### Process executed from memory 
+        expertmode_output "ls -alR /proc/*/exe 2>/dev/null | ${grep} '^\/memfd:.*?\(deleted\)'"
         ### suspicious files
         FILES="usr/bin/sourcemask usr/bin/ras2xm usr/sbin/in.telnet \
 sbin/vobiscum  usr/sbin/jcd usr/sbin/atd2 usr/bin/.etc usr/bin/xstat \
@@ -540,8 +589,7 @@ ${ROOTDIR}usr/include/syslogs.h"
 
       ## Suckit rootkit
       expertmode_output "${strings} ${ROOTDIR}sbin/init | ${egrep} '\.sniffer'" 
-	  expertmode_output "${strings} ${ROOTDIR}sbin/init | ${egrep} FUCK"
-      #expertmode_output "cat ${ROOTDIR}proc/1/maps | ${egrep} init."
+      expertmode_output "cat ${ROOTDIR}proc/1/maps | ${egrep} init."
       expertmode_output "cat ${ROOTDIR}dev/.golf"
 
       ## Volc rootkit
@@ -593,12 +641,13 @@ ${ROOTDIR}usr/sbin/initcheck ${ROOTDIR}usr/sbin/ldb"
       expertmode_output "${ls} -l ${ROOTDIR}etc/.enyeOCULTAR.ko"
 
       ## SSJD Operation Windigo  (Linux/Ebury) 
-      if $ssh -G 2>&1 | grep -v usage > /dev/null; then
+      ssh=`which ssh` 
+      if $ssh -V 2>&1 | ${egrep} "OpenSSH_[1-5]\.|OpenSSH_6\.[0-7]" >/dev/null; then
          expertmode_output "${ssh} -G 2>&1  | grep -e illegal -e unknow" 
       fi
 
       ## Mumblehard backdoor/botnet 
-      expertmode_output "cat ${ROOTDIR}/var/spool/cron/crontabs | egrep var/tmp"
+      expertmode_output "cat ${ROOTDIR}/var/spool/cron/crontabs | ${egrep} var/tmp"
 
       ## Backdoors.Linux.Mokes.a
       expertmode_output "${ls} -l ${ROOTDIR}tmp/ss0-[0-]9*" 
@@ -619,6 +668,50 @@ ${ROOTDIR}usr/sbin/initcheck ${ROOTDIR}usr/sbin/ldb"
       
       ## Rocke Monero Miner 
       expertmode_output "${find} ${ROOTDIR}etc ${findargs} -name ld.so.pre -o -name xig" 
+
+      ## PWNLNX4 - An LKM Roottkit 
+      expertmode_output "${find} ${ROOTDIR}/opt/uOnlineBuilder64 ${ROOTDIR}/var/tmp/.1 ${ROOTDIR}/var/tmp/Linux_Server"
+
+      ## PWNLNX6 - An LKM Roottkit 
+      expertmode_output "${find} ${ROOTDIR}/tmp/suterusu"
+
+      ## Umbreon 
+      expertmode_output "${find} ${ROOTDIR}usr/share/libc.so*"
+
+      ## KINSING.A Backdoor 
+      expertmode_output "${find} ${ROOTDIR}tmp/kdevtmp*"
+
+      ## Syslogk LKM rootkit 
+      ${echo} 1 >${ROOTDIR}/proc/syslogk
+      expertmode_output "${ls} ${ROOTDIR}proc/syslogk"
+
+      ## Kovid LKM rootkit 
+      ${kill} -SIGCONT 31337
+      expertmode_output "${ls} ${ROOTDIR}proc/kovid"
+      ${kill} -SIGCONT 31337  
+      expertmode_output "${ls} ${ROOTDIR}proc/kovid"
+
+      ## RotaJakiro 
+      expertmode_output "${ls} ${ROOTDIR}bin/system-daemon"
+      #
+      ## Tsunami DDoS Malware
+      expertmode_output "${ls} ${ROOTDIR}bin/a ${ROOTDIR}bin/cls"
+
+      ## Linux BPFDoor 
+      expertmode_output "${egrep} packet_recvmsg ${ROOTDIR}proc/*/stack" 
+      ## Linux Earth Lusca
+      if [ ${SYSTEM} = "Linux" ]; then
+         expertmode_output "ps -auwx | egrep 'kworker/[0-9]*]$'"
+      fi
+
+      ## Linux Bootkitty (UEFI Bootkit)
+      if [ ${SYSTEM} = "Linux" ]; then
+         expertmode_output "${egrep} "LD_PRELOAD" ${ROOTDIR}/boot/grub/grub.cfg"
+         expertmode_output "${egrep} -r "LD_PRELOAD" ${ROOTDIR}/etc/grub.d/*" 
+      fi
+      
+      ## SSH WORM 
+      [ -d ${ROOTDIR}root/.config ] && find ${ROOTDIR}root/.config/prng 
 
       ## Common SSH-SCANNERS
       expertmode_output "${find} ${ROOTDIR}/tmp ${ROOTDIR}/var/tmp ${findargs} -name vuln.txt -o -name ssh-scan -o -name pscan2"
@@ -680,6 +773,15 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
       echo
       echo ${files}
    fi
+
+   ### Process executed from memory
+   if [ "${QUIET}" != "t" ]; then printn \
+      "Searching for process executed from memory... "; fi
+      ls -alR /proc/*/exe 2>/dev/null | ${grep} "^\/memfd:.*?\(deleted\)" &&
+      echo "INFECTED: Possible process running from memory:" ||
+      {
+          [ "${QUIET}" != "t" ] && echo "nothing found"
+      }
 
    ### HiDrootkit
    if [ "${QUIET}" != "t" ]; then printn \
@@ -1023,9 +1125,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ -f ${ROOTDIR}sbin/init ]; then
       if [ "${QUIET}" != "t" ];then printn "Searching for Suckit rootkit... "; fi
       if [ ${SYSTEM} != "HP-UX" ] && ( ${strings} ${ROOTDIR}sbin/init | ${egrep} '\.sniffer'   || \
-	      ${strings} ${ROOTDIR}sbin/init | ${egrep} FUCK \
-	      #cat ${ROOTDIR}/proc/1/maps | ${egrep} "init." \
- 		  ) >/dev/null 2>&1
+	      cat ${ROOTDIR}/proc/1/maps | ${egrep} "init." ) >/dev/null 2>&1
         then
         echo "Warning: ${ROOTDIR}sbin/init INFECTED"
       else
@@ -1123,7 +1223,16 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Fu rootkit default files... "; fi
    if [ -f ${ROOTDIR}sbin/xc -o -f ${ROOTDIR}bin/.lib -o \
         -f ${ROOTDIR}usr/include/ivtype.h ]; then
-      echo "Possible Fu rootkit installed"
+      echo "Possible Fu rootkit INSTALLED"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## Kenga3 Rookit
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Kenga3 rotkit default files... "; fi
+   if [ -d "${ROOTDIR}usr/include/. ." ]; then
+      echo "Possible Kenga3 rootkit INSTALLED"
    else
       if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
    fi
@@ -1132,7 +1241,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for ESRK rootkit default files... "; fi
    if [ -d "${ROOTDIR}usr/lib/tcl5.3" ]; then
-      echo "Possible ESRK rootkit installed"
+      echo "Possible ESRK rootkit INSTALLED"
    else
       if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
    fi
@@ -1143,7 +1252,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    found=0
    for i in `$echo $PATH|tr -s ':' ' '`; do
       if [ -f "${ROOTDIR}${i}/rootedoor" ]; then
-         echo "Possible rootedoor installed in ${ROOTDIR}${i}"
+         echo "Possible rootedoor INSTALLED in ${ROOTDIR}${i}"
 	 found=1
       fi
    done
@@ -1173,7 +1282,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    LIBKEY="lib/x86_64-linux-gnu/libkeyutils.so.1" 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Linux/Ebury - Operation Windigo ssh... "; fi
-   if $ssh -G 2>&1 | grep -v usage > /dev/null; then
+   if $ssh -V 2>&1 | ${egrep} "OpenSSH_[1-5]\.|OpenSSH_6\.[-0-7]" >/dev/null; then
       if $ssh -G 2>&1 | grep -e illegal -e unknow > /dev/null; then 
          if [ "${QUIET}" != "t" ]; then echo "nothing found "; fi
       else
@@ -1184,7 +1293,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       if [ "${QUIET}" != "t" ]; then 
          echo "not tested"; fi
    else
-      if ${strings} -a ${ROOTDIR}${LIBKEY} | egrep "libns2|libns5|libpw3|libpw5|libsbr|libslr" >/dev/null; then 
+      if ${strings} -a ${ROOTDIR}${LIBKEY} | ${egrep} "libns2|libns5|libpw3|libpw5|libsbr|libslr" >/dev/null; then 
          echo "Possible Linux/Ebury 1.6 - Operation Windigo installed"
       else
          if [ "${QUIET}" != "t" ]; then echo "nothing found "; fi
@@ -1203,7 +1312,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for 64-bit Linux Rootkit modules... "; fi
-   files="`${find} ${ROOTDIR}/lib/modules ${findargs} -name module_init.ko 2 2> /dev/null`"
+   files="`${find} ${ROOTDIR}/lib/modules ${findargs} -name module_init.ko 2> /dev/null`"
    if [ "${files}" = "" ]; then
       if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
    else
@@ -1214,7 +1323,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Mumblehard Linux ... "; fi
    if [ -e ${ROOTDIR}var/spool/cron/crontabs ]; then 
-      cat ${ROOTDIR}var/spool/cron/crontabs/* 2>/dev/null | egrep "var/tmp"  
+      cat ${ROOTDIR}var/spool/cron/crontabs/* 2>/dev/null | ${egrep} "var/tmp"  
       if [ $? -ne 0 ] ; then 
          if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
       else 
@@ -1249,12 +1358,12 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Linux.Xor.DDoS ... "; fi
    files="`${find} ${ROOTDIR}tmp/ ${findargs} -executable -type f 2> /dev/null`"
    if [ "${files}" = "" ]; then
-      files="`${ls} ${ROOTDIR}etc/cron.hourly/udev.sh 2> /dev/null`"
-      files="$files $($ls ${ROOTDIR}etc/cron.hourly/gcc.sh 2> /dev/null)" 
-      if [ "${files}" = " " ]; then 
+      files="`${ls} ${ROOTDIR}etc/cron.hourly/udev.sh ${ROOTDIR}etc/cron.hourly/gcc.sh 2> /dev/null`" 
+      if [ "${files}" = "" ]; then 
          if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
       else
          echo "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
+         echo "${files}"
       fi
    else
      echo "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
@@ -1282,7 +1391,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    ## Hidden Cobra (IBM AIX) 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Hidden Cobra ... "; fi
-   if ${ls} "${ROOTDIR}tmp/.ICE-unix/m*.so" ${ROOTDIR}tmp/.ICE-unix/engine.so 2>/dev/null; then 
+   if ${ls} ${ROOTDIR}tmp/.ICE-unix/m*.so ${ROOTDIR}tmp/.ICE-unix/engine.so 2>/dev/null; then 
       echo "INFECTED: Possible Malicious Hidden Cobra installed"
    else
       if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
@@ -1297,7 +1406,132 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
    fi  
 
-   ###
+   ## PWNLNX4 - An LKM Roottkit 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for PWNLNX4 lkm... "; fi
+   if [ -d "${ROOTDIR}/uOnlineBuilder64" -o -d "${ROOTDIR}/var/tmp/.1" -o -d "${ROOTDIR}/var/tmp/Linux_Server" ]; then 
+      echo "INFECTED: Possible Malicious PWNLNX4 installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## PWNLNX6 - Another LKM Roottkit 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for PWNLNX6 lkm... "; fi
+   if [ -d "${ROOTDIR}/tmp/suterusu" ] ; then 
+      echo "INFECTED: Possible Malicious PWNLNX6 installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## Umbreon Linux Rootkit
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Umbreon lrk... "; fi
+   if  ${ls} ${ROOTDIR}usr/share/libc.so.* > /dev/null 2>&1 ; then
+      echo "INFECTED: Possible Malicious UMBREON LRK installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## KINSING.A Backdoor 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Kinsing.a backdoor... "; fi
+   if  ${ls} "${ROOTDIR}tmp/kdevtmpfsi" > /dev/null 2>&1 ; then
+      echo "INFECTED: Possible Malicious KINSING.A Backdoor installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## RotaJakiro Backdoor 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for RotaJakiro backdoor... "; fi
+   if  ${ls} "${ROOTDIR}bin/systemd-daemon" > /dev/null 2>&1 ; then
+      echo "INFECTED: Possible Malicious JOTAJAKIRO Backdoor installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## Syslogk LKM rootkit 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Syslogk LKM rootkit... "; fi
+      (${echo} 1> "${ROOTDIR}proc/syslogk") >/dev/null 2>&1
+   if  ${ls} "${ROOTDIR}proc/syslogk" > /dev/null 2>&1 ; then
+      echo "INFECTED: Possible Malicious Syslogk LKM rootkit installed"
+   else
+      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   fi
+
+   ## Kovid LKM rootkit 
+   f=""
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Kovid LKM rootkit... "; fi
+   for i in 1 2; do 
+      ${kill} -SIGCONT 31337 2>/dev/null 
+      if  ${ls} "${ROOTDIR}proc/kovid" > /dev/null 2>&1 ; then
+         echo "INFECTED: Possible Malicious Kovid LKM rootkit installed"
+         f="Kovid"
+      fi
+   done
+   [ "${f}" = "" -a "${QUIET}" != "t" ] && echo "nothing found"
+   
+   ## Tsunami DDoS Malware
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Tsunami DDoS Malware.. "; fi
+   [ -f "${ROOTDIR}bin/a" -o -f "${ROOTDIR}bin/cls" -o -f "${ROOTDIR}bin/clean" ] && 
+      echo "INFECTED: Possible Tsunami DDoS Malware installed" ||
+      { 
+          [ "${QUIET}" != "t" ] && echo "nothing found"
+      } 
+
+   ## Linux BPF Door 
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Linux BPF Door.. "; fi
+    ${egrep} packet_recvmsg /proc/*/stack >/dev/null 2>&1 && 
+      echo "INFECTED: Possible Linux BPFDoor Malware installed" ||
+      { 
+          [ "${QUIET}" != "t" ] && echo "nothing found"
+      } 
+
+   ## Linux Earth Lusca Backdoor
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Linux Earth Lusca BackDoor.. "; fi
+   [ "$BUSYBOX" = "1" ] && echo "Not tested"  || 
+   { 
+      if [ "${SYSTEM}" = "Linux" ]; then
+         ps -auwx | ${egrep} "kworker/[0-9]*]$" >/dev/null 2>&1 &&
+         echo "INFECTED: Possible Linux Earth Lusca Malware installed" ||
+         {
+            [ "${QUIET}" != "t" ] && echo "nothing found"
+         }
+         else
+            [ "${QUIET}" != "t" ] && echo "nothing found"
+      fi
+    } 
+
+   ### Linux Bootkitty (UEFI Bootkit)
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for Linux Bootkitty... "; fi
+   if [ "${SYSTEM}" = "Linux" ]; then
+      ${egrep} "LD_PRELOAD" ${ROOTDIR}etc/grub.d/*  ${ROOTDIR}boot/grub/grub.cfg >/dev/null 2>&1 &&
+      echo "INFECTED: Possible Linux Bootkitty installed" ||
+      {
+          [ "${QUIET}" != "t" ] && echo "nothing found"
+      }
+   else
+     [ "${QUIET}" != "t" ] && echo "nothing found"
+   fi
+
+   ### SSH WORM
+   if [ "${QUIET}" != "t" ]; then
+      printn "Searching for SSH WORM... "; fi
+   if [ -d ${ROOTDIR}root/.config/prng ]; then
+      echo "INFECTED: Possible SSH WORM installed" 
+   else
+      [ "${QUIET}" != "t" ] && echo "nothing found"
+   fi
+
+
+   ##
    ### Suspects PHP files
    ###
    if [ "${QUIET}" != "t" ]; then
@@ -1337,6 +1571,11 @@ fi
 
 ######################################################################
 # util functions
+
+die () {
+    echo >&2 "$*"
+    exit 1
+}
 
 # our which(1)
 loc () {
@@ -1399,17 +1638,27 @@ expertmode_output() {
     return 0
 }
 
-tnfs ()
+exclude_fstype ()
 {
-   ## Check if -fstype nfs works
-   findargs=""
+  # Make sure a valid fstype has been provided.
+  if ! echo "$1" | ${egrep} '^[A-Za-z0-9.]+$' > /dev/null 2>&1; then
+    echo >&2 "Invalid fstype: $1"
+    exit 1
+  fi
+
+   ## Check if -fstype $type works
    if find /etc -maxdepth 0 >/dev/null 2>&1; then
-        find /etc ! -fstype nfs -maxdepth 0 >/dev/null 2>&1 && \
-           findargs="! -fstype nfs "
+        find /etc ! -fstype "$1" -maxdepth 0 >/dev/null 2>&1 && \
+           findargs="${findargs} ! -fstype $1 "
    elif find /etc -prune > /dev/null 2>&1; then
-        find /etc ! -fstype nfs -prune > /dev/null 2>&1 && \
-           findargs="! -fstype nfs "
+        find /etc ! -fstype "$1" -prune > /dev/null 2>&1 && \
+           findargs="${findargs} ! -fstype $1 "
    fi
+}
+
+chk_busybox() {
+    CMD=`loc du du $pth`
+    if ls -l "$CMD" | grep busybox > /dev/null; then BUSYBOX=1; fi
 }
 
 ######################################################################
@@ -1449,6 +1698,13 @@ chk_chsh () {
     [ ${?} -ne 0 ] && return ${NOT_FOUND}
 
     REDHAT_PAM_LABEL="*NOT*"
+    GENERIC_ROOTKIT_FEDORA=${GENERIC_ROOTKIT_LABEL} 
+    if [ -f  /etc/system-release ]; then 
+       v="0"`${egrep} -i fedora /etc/system-release | cut -d " " -f 3`
+       if [ "$v" -gt "32" ]; then 
+          GENERIC_ROOTKIT_FEDORA="bash|elite$|vejeta|\.ark|iroffer"
+       fi  
+    fi
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
@@ -1457,7 +1713,7 @@ chk_chsh () {
 
     case "${SYSTEM}" in
        Linux)
-          if ${strings} -a ${CMD} | ${egrep} "${GENERIC_ROOTKIT_LABEL}" \
+          if ${strings} -a ${CMD} | ${egrep} "${GENERIC_ROOTKIT_FEDORA}" \
           >/dev/null 2>&1
              then
              if ${strings} -a ${CMD} | ${egrep} "${REDHAT_PAM_LABEL}" \
@@ -1516,6 +1772,21 @@ $1 >= 3.0) print 1; else print 0}'` -eq 1 ] && \
     return ${STATUS}
 }
 
+chk_nologin () {
+    STATUS=${NOT_INFECTED}
+    CMD=`loc nologin ghost $pth`
+    
+    [ ${CMD} = "ghost" ] &&  return ${NOT_TESTED} 
+    if [ "${EXPERT}" = "t" ]; then
+       expertmode_output "${strings} -a ${CMD} | ${egrep} \"/bin/*sh\""
+    fi
+    if ${strings} -a ${CMD} | ${egrep} "/bin/*sh" >/dev/null 2>&1
+    then
+       STATUS=${INFECTED}
+    fi
+    return ${STATUS}
+    
+}
 chk_passwd () {
     STATUS=${NOT_INFECTED}
     CMD=`loc passwd passwd $pth`
@@ -1694,12 +1965,12 @@ chk_du () {
     STATUS=${NOT_INFECTED}
     DU_INFECTED_LABEL="/dev/ttyof|/dev/pty[pqrsx]|w0rm|^/prof|/dev/tux|file\.h"
     CMD=`loc du du $pth`
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
         return 5
     fi
-
     if ${strings} -a ${CMD} | ${egrep} "${DU_INFECTED_LABEL}" >/dev/null 2>&1
     then
        STATUS=${INFECTED}
@@ -1737,11 +2008,13 @@ chk_netstat () {
 NETSTAT_I_L="/dev/hdl0/dev/xdta|/dev/ttyoa|/dev/pty[pqrsx]|/dev/cui|/dev/hdn0|/dev/cui221|/dev/dszy|/dev/ddth3|/dev/caca|^/prof|/dev/tux|grep|addr\.h|__bzero"
     CMD=`loc netstat netstat $pth`
 
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
+
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
         return 5
     fi
-
+    [ "netstat" = ${CMD} ] && return ${STATUS}
     if ${strings} -a ${CMD} | ${egrep} "${NETSTAT_I_L}" \
     >/dev/null 2>&1
     then
@@ -1755,6 +2028,7 @@ chk_ps () {
 PS_I_L="/dev/xmx|\.1proc|/dev/ttyop|/dev/pty[pqrsx]|/dev/cui|/dev/hda[0-7]|\
 /dev/hdp|/dev/cui220|/dev/dsx|w0rm|/dev/hdaa|duarawkz|/dev/tux|/security|^proc\.h|ARRRGH\.so"
    CMD=`loc ps ps $pth`
+   [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
@@ -1914,6 +2188,8 @@ chk_basename () {
    STATUS=${NOT_INFECTED}
    CMD=`loc basename basename $pth`
 
+   [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
+
    if [ "${EXPERT}" = "t" ]; then
        expertmode_output "${strings} -a ${CMD}"
        expertmode_output "${ls} -l ${CMD}"
@@ -1937,6 +2213,8 @@ chk_basename () {
 chk_dirname () {
     STATUS=${NOT_INFECTED}
     CMD=`loc dirname dirname $pth`
+
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
@@ -2006,6 +2284,8 @@ chk_date () {
     S_L="/bin/.*sh"
     CMD=`loc date date $pth`
 
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
+
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
         expertmode_output "${ls} -l ${CMD}"
@@ -2036,6 +2316,8 @@ chk_echo () {
     STATUS=${NOT_INFECTED}
     CMD=`loc echo echo $pth`
 
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
+
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
         expertmode_output "${ls} -l ${CMD}"
@@ -2056,6 +2338,8 @@ chk_echo () {
 chk_env () {
     STATUS=${NOT_INFECTED}
     CMD=`loc env env $pth`
+
+    [ "$BUSYBOX" = "1" ] && return ${NOT_TESTED}
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
@@ -2178,7 +2462,10 @@ chk_write () {
         expertmode_output "${ls} -l ${CMD}"
         return 5
     fi
-
+    if [ ! -f "${CMD}" ]; then 
+       STATUS=${NOT_FOUND} 
+       return ${STATUS}
+    fi
     if ${strings} -a ${CMD} | ${egrep} "${WRITE_ROOTKIT_LABEL}" | grep -v locale > /dev/null 2>&1
     then
         STATUS=${INFECTED}
@@ -2192,8 +2479,9 @@ chk_write () {
 
 chk_w () {
     STATUS=${NOT_INFECTED}
-    CMD=`loc w w $pth`
+    CMD=`loc w wx $pth`
     W_INFECTED_LABEL="uname -a"
+    [ "$CMD" = "wx" ] && return ${NOT_TESTED}
 
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "${strings} -a ${CMD}"
@@ -2323,6 +2611,7 @@ chk_egrep () {
         expertmode_output "${ls} -l ${CMD}"
         return 5
     fi
+    [ -z "${CMD}" ] && return ${STATUS} 
     if ${strings} -a ${CMD} | ${egrep} "${EGREP_INFECTED_LABEL}" > /dev/null 2>&1
     then
         STATUS=${INFECTED}
@@ -2527,15 +2816,9 @@ chk_rshd () {
 }
 
 chk_tcpdump () {
-   STATUS=${NOT_INFECTED}
-   TCPDUMP_I_L="212.146.0.34:1963";
-   _chk_netstat_or_ss; 
-   OPT="-an" 
-   [ "${netstat}" = "ss" ] && OPT="-a"  
-   if ${netstat} "${OPT}" | ${egrep} "${TCPDUMP_I_L}"> /dev/null 2>&1; then
-      STATUS=${INFECTED}
-   fi
-   return ${STATUS}
+    TCPDUMP_I_L="212.146.0.34:1963"
+    remotes | grep -Fq "${TCPDUMP_I_L}" && return ${INFECTED}
+    return ${NOT_INFECTED}
 }
 
 chk_tcpd () {
@@ -2566,10 +2849,10 @@ chk_tcpd () {
 
 chk_sshd () {
     STATUS=${NOT_INFECTED}
-    SSHD2_INFECTED_LABEL="check_global_passwd|panasonic|satori|vejeta|\.ark|/hash\.zk"
+    SSHD2_INFECTED_LABEL="check_global_passwd|panasonic|satori|vejeta|\.ark|/hash\.zk|DecryptedPayload"
     getCMD 'sshd'
 
-    if [ ${?} -ne 0 ]; then
+    if [ -s ${CMD} ]; then
        return ${NOT_FOUND}
     fi
 
@@ -2578,7 +2861,7 @@ chk_sshd () {
         return 5
     fi
 
-    if ${strings} -a ${CMD} | ${egrep} "${SSHD2_INFECTED_LABEL}" \
+    if ${strings} -a "${CMD}" | ${egrep} "${SSHD2_INFECTED_LABEL}" \
        > /dev/null 2>&1
     then
         STATUS=${INFECTED}
@@ -2691,6 +2974,63 @@ printn () {
     fi
 }
 
+chkxcmd () {
+    local p
+    p=`loc $1 $1 $chkrkpth`
+    case "$p" in
+        /* | ./* | ../*)
+            [ -x "$p" ]; return $?
+	    ;;
+        *)
+	    return 2
+	    ;;
+    esac
+}
+
+
+selfcheck () {
+    local _cmdlist _cmd _file _rc _alt
+    
+    ### check external required commands
+    _cmdlist="awk cut echo grep find head id ls ps sed strings uname"
+    
+    for _cmd in $_cmdlist; do
+	_file=`loc $_cmd $_cmd $chkrkpth`
+	chkxcmd $_file
+	case $? in
+	    1)
+		echo >&2 "chkrootkit: can't exec \`$_file'."
+		_rc=1
+		;;
+	    2)
+		echo >&2 "chkrootkit: can't find \`$_cmd'."
+		_rc=1
+		;;
+	esac
+	eval $_cmd=$_file
+    done
+
+    ### check commands with alternatives, first find used first
+    _cmdlist="netstat:ss"
+    for _alt in $_cmdlist; do
+	_cmd=${_alt%:*}
+	_alt=${_alt#*:}
+	_file=`loc $_cmd x$_cmd $chkrkpth`
+	chkxcmd $_file || {
+	    _file=`loc $_alt $_alt $chkrkpth`
+	    if chkxcmd $_file; then
+		_cmd=$_alt
+	    else
+		echo >&2 "chkrootkit: can't exec/find neither \`$_cmd' nor \`$_alt'."
+		_rc=1
+	    fi
+	}
+	eval $_cmd=$_file
+    done
+    return $_rc
+}
+
+
 # main
 #
 
@@ -2702,6 +3042,8 @@ R_REGEXP='([^A-Za-z0-9_]|$)'
 ### default ROOTDIR is "/"
 ROOTDIR='/'
 mode="rt" 
+
+findargs=""
 
 while :
 do
@@ -2720,14 +3062,19 @@ do
 
         -q)     QUIET=t;;
 
-        -V)     echo >&2 "chkrootkit version ${CHKROOTKIT_VERSION}"
-                exit 1;;
+        -V)     die chkrootkit version ${CHKROOTKIT_VERSION};;
 
-        -l)     echo >&2 "$0: tests: ${TOOLS} ${TROJAN}"
-                exit 1;;
+        -l)     die $0: tests: ${TOOLS} ${TROJAN};;
 
-        -n)     tnfs;;
+        -n)     exclude_fstype nfs;;
 
+        -T)     shift
+                exclude_fstype "$1";;
+
+	-s)     only_selfcheck=1;;
+
+	-t)     testing=1;;
+	
         -h | -*) echo >&2 "Usage: $0 [options] [test ...]
 Options:
         -h                show this help and exit
@@ -2738,30 +3085,14 @@ Options:
         -x                expert mode
         -r dir            use dir as the root directory
         -p dir1:dir2:dirN path for the external commands used by chkrootkit
-        -n                skip NFS mounted dirs"
+        -n                skip NFS mount points
+        -T fstype         skip mount points of the supplied file system type"
                 exit 1;;
         *)      break
-        esac
+	esac
 
         shift
 done
-
-### check the external commands needed
-
-cmdlist="
-awk
-cut
-echo
-egrep
-find
-head
-id
-ls
-ps
-sed
-strings
-uname
-"
 
 ### PATH used by loc
 pth=`echo $PATH | sed -e "s/:/ /g"`
@@ -2774,38 +3105,22 @@ else
   ### use the path provided with the -p option
   chkrkpth=`echo ${CHKRKPATH} | sed -e "s/:/ /g"`
 fi
-echo=echo
-for file in $cmdlist; do
-        xxx=`loc $file $file $chkrkpth`
-        eval $file=$xxx
-        case "$xxx" in
-        /* | ./* | ../*)
 
-                if [ ! -x "${xxx}" ]
-                then
-                    echo >&2 "chkrootkit: can't exec \`$xxx'."
-                    exit 1
-                fi
-                ;;
-        *)
-                echo >&2 "chkrootkit: can't find \`$file'."
-                exit 1
-                ;;
-        esac
-done
-
+selfcheck || die
+[ "$only_selfcheck" ] && die
 
 SYSTEM=`${uname} -s`
 VERSION=`${uname} -r`
-if [ "${SYSTEM}" != "FreeBSD" -a ${SYSTEM} != "OpenBSD" ] ; then
-   V=4.4
-else
-   V=`echo $VERSION| ${sed} -e 's/[-_@].*//'| ${awk} -F . '{ print $1 "." $2 $3 }'`
-fi
+case "${SYSTEM}" in
+    FreeBSD|OpenBSD|Linux) V=`echo $VERSION| ${sed} -e 's/[-_@].*//'| ${awk} -F . '{ print $1 "." $2 $3 }'`;;
+    *) V=4.4;;
+esac
+
+# Check if busybox is present
+chk_busybox
 
 # head command
-_head()
-{
+_head() {
    if `$echo a | $head -n 1 >/dev/null 2>&1` ; then
       $head -n `echo $1 | tr -d "-"`
    else
@@ -2833,10 +3148,174 @@ else
    ps_cmd="-fe"
 fi
 
-if [ `${id} | ${cut} -d= -f2 | ${cut} -d\( -f1` -ne 0 ]; then
-   echo "$0 needs root privileges"
-   exit 1
+### Linux' net-tools and busybox, netbsd, freebsd netstat, or Linux ss
+### variants
+
+# localports [proto [family]] - print all ports the host is listening
+#                               on.
+#
+# - proto .. -t|-u for only TCP|UDP, if omitted both are reported.
+# - family .. inet|inet6 for only IPv4 or IPv6, if omitted both are
+#               reported.
+
+if [ ss = "${netstat##*/}" ]; then
+    localports () {
+	local _proto _status _rq _sq _local _rest
+	$netstat -tunlH ${2:+-f $2} | 
+	    while read _proto _status _rq _sq _local _rest; do
+		case "$1" in
+		    -t) [ tcp = "$_proto" ] || continue;;
+		    -u) [ udp = "$_proto" ] || continue;;
+		esac
+		echo "${_local##*:}"
+	    done
+    }
+    remotes () {
+	local _proto _status _rq _sq _local _remote _rest
+	$netstat -tunH ${2:+-f $2} | {
+	    while read _proto _status _rq _sq _local _remote _rest; do
+		case "$1" in
+		    -t) [ tcp = "$_proto" ] || continue;;
+		    -u) [ udp = "$_proto" ] || continue;;
+		esac
+		echo "${_remote}"
+	    done
+	}
+    }
+else
+    # ntsttlp [proto [family]] - extract local port from netstat
+    #                            output
+    # - proto .. -t|-u for only TCP|UDP, if omitted both are reported.
+    # - family .. inet|inet6 for only IPv4 or IPv6, if omittet both
+    #             are reported.
+    
+    ntstlp () {
+	local _port _proto _rq _sq _local _rest _ip
+	while read _proto _rq _sq _local _rest; do
+	    _port="${_local##*$PORTSEP}"
+	    _ip=${_local%%$PORTSEP*}
+	    [ "$_port" = "*" ] && continue # in NetBSD ports can be *
+	    [ NetBSD = "$SYSTEM" ] && {
+		case "$_proto" in  tcp*|udp*);; *) continue;; esac
+	    }
+	    [ x"$1" = x ] || {
+		case "$_proto" in
+		    tcp*) [ x"$1" = x-t ] || continue ;;
+		    udp*) [ x"$1" = x-u ] ||  continue;;
+		esac
+	    }
+	    [ x"$2" = x ] || {
+		case "$2" in
+		    inet)  [ x"${_ip%%*.*}" = x ] || continue;;
+		    inet6) [ x"${_ip%%*:*}" = x ] || continue;;
+		esac
+	    }
+	    echo "$_port";
+	done
+    }
+    ntstrm () {
+	local _port _proto _rq _sq _local _remote _rest _ip
+	while read _proto _rq _sq _local _remote _rest; do
+	    [ NetBSD = "$SYSTEM" ] && {
+		case "$_proto" in  tcp*|udp*);; *) continue;; esac
+	    }
+	    [ x"$1" = x ] || {
+		case "$_proto" in
+		    tcp*) [ x"$1" = x-t ] || continue ;;
+		    udp*) [ x"$1" = x-u ] ||  continue;;
+		esac
+	    }
+	    [ x"$2" = x ] || {
+		case "$2" in
+		    inet)  [ x"${_ip%%*.*}" = x ] || continue;;
+		    inet6) [ x"${_ip%%*:*}" = x ] || continue;;
+		esac
+	    }
+	    echo "$_remote"
+	done
+    }
+    
+    PORTSEP=:
+    
+    _SIGNATURE="$($netstat -V 2>&1 |head -2)"
+    case "$_SIGNATURE" in
+	net-tools*)
+	    localports () {
+		$netstat -nl ${1:--t -u} --protocol=${2:-inet,inet6} | {
+		    read _; read _; ntstlp;
+		}
+	    }
+	    remotes () {
+		echo net-tools
+		$netstat -n ${1:--t -u} --protocol=${2:-inet,inet6} | {
+		    read _; read _; ntstrm;
+		}
+	    }
+	;;
+	*BusyBox*)
+	    localports () {
+		$netstat -nl ${1:--t -u} | { read _; read _; ntstlp "" $2; }
+	    }
+	    remotes () {
+		echo hi
+		$netstat -n ${1:--t -u} | { read _; read _; ntstrm "" $2; }
+	    }
+	    ;;
+	Active*) # NetBSD (and others?)
+	    PORTSEP=.
+	    localports () { $netstat -na -f ${2:-inet,inet6} | ntstlp $1; }
+	    remotes () { $netstat -n -f ${2:-inet,inet6} | ntstrm $1; }
+	    ;;
+	netstat:?illegal?option*) # FreeBSD
+	    PORTSEP=.
+	    localports () {
+		local _proto=""
+		case "$1" in
+		    -t) _proto="-p tcp";;
+		    -u) _proto="-p udp";;
+		esac
+		for family in ${2:-inet inet6}; do
+		    $netstat -na -f $family $_proto | {
+			read _; read _; ntstlp;
+		    }
+		done
+	    }
+	    remotes () {
+		local _proto=""
+		case "$1" in
+		    -t) _proto="-p tcp";;
+		    -u) _proto="-p udp";;
+		esac
+		for family in ${2:-inet inet6}; do
+		    $netstat -n -f $family $_proto | {
+			read _; read _; ntstrm;
+		    }
+		done
+	    }
+	    ;;
+	*) die "chkrootkit: can't detect netstat variant.";;
+    esac
 fi
+
+if [ "${ROOTDIR}" != "/" ]; then
+
+    ### remove trailing `/'
+    ROOTDIR=`echo ${ROOTDIR} | ${sed} -e 's/\/*$//g'`
+
+    for dir in ${pth}
+    do
+      if echo ${dir} | ${egrep} '^/' > /dev/null 2>&1
+      then
+        newpth="${newpth} ${ROOTDIR}${dir}"
+      else
+        newpth="${newpth} ${ROOTDIR}/${dir}"
+      fi
+    done
+    pth=${newpth}
+   ROOTDIR="${ROOTDIR}/"
+fi
+
+[ $testing ] && return
 
 if [ $# -gt 0 ]
 then
@@ -2861,41 +3340,18 @@ if [ "${DEBUG}" = "t" ]; then
     set -x
 fi
 
-if [ "${ROOTDIR}" != "/" ]; then
-
-    ### remove trailing `/'
-    ROOTDIR=`echo ${ROOTDIR} | ${sed} -e 's/\/*$//g'`
-
-    for dir in ${pth}
-    do
-      if echo ${dir} | ${egrep} '^/' > /dev/null 2>&1
-      then
-        newpth="${newpth} ${ROOTDIR}${dir}"
-      else
-        newpth="${newpth} ${ROOTDIR}/${dir}"
-      fi
-    done
-    pth=${newpth}
-   ROOTDIR="${ROOTDIR}/"
-fi
-
 if [ "${QUIET}" != "t" ]; then
     echo "ROOTDIR is \`${ROOTDIR}'"
 fi
 
-#
-# NETSTAT OR SS
-#
-_chk_netstat_or_ss() 
-{
-    netstat="netstat"  
-    CMD=`loc ss ss $pth`
-    [ ${?} -eq 0 ] && netstat="ss"  
-}
+if [ `${id} | ${cut} -d= -f2 | ${cut} -d\( -f1` -ne 0 ]; then
+   echo "$0 needs root privileges"
+   exit 1
+fi
+
 
 for cmd in ${LIST}
 do
-
     if echo "${TROJAN}" | \
     ${egrep} "${L_REGEXP}$cmd${R_REGEXP}" > /dev/null 2>&1
     then
@@ -2904,7 +3360,6 @@ do
         fi
         chk_${cmd}
         STATUS=$?
-
         ### quiet mode
         if [ "${QUIET}" = "t" ]; then
             ### show only INFECTED status
@@ -2913,7 +3368,6 @@ do
             fi
             continue
         fi
-
         case $STATUS in
         0) echo "INFECTED";;
         1) echo "not infected";;
@@ -2928,8 +3382,8 @@ do
             printn "Checking \`$cmd'... "
         fi
         ${cmd}
-
     fi
 done
+
 
 ### chkrootkit ends here.

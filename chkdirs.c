@@ -24,6 +24,7 @@
   2005/22/05 - APPLE test for limits.h included by Aaron Harwood
   2007/08/10 - strncpy used instead of strcpy - nm
   2007/12/24 - change `c' variable type - NIDE, Naoyuki
+  2020/12/24 - Add a warning for btrfs (no inode usage)
 
 */
 
@@ -42,6 +43,9 @@
 #include <string.h>
 #include <errno.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 #ifndef NAME_MAX
 #define NAME_MAX        PATH_MAX
 #endif
@@ -163,6 +167,11 @@ int check_dir (char *dir, char *path, int linkcount, int norecurse)
       goto abort;
     }
     linkcount = statinfo.st_nlink;
+    if (linkcount == 1) 
+    {
+       fprintf(stderr, "WARNIING: It seems you are using BTRFS, if this is true chkdirs can't help you to find hidden files/dirs\n"); 
+       goto abort; 
+     } 
   }
 
   if (!(dirhandle = opendir("."))) {
@@ -231,6 +240,8 @@ int check_dir (char *dir, char *path, int linkcount, int norecurse)
 	    curpath, strerror(errno));
     exit(255);
   }
+   if (statinfo.st_nlink == 1) 
+       exit (0); 
   free((void *)fullpath);
   free((void *)curpath);
   return(diff);

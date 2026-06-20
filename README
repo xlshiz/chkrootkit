@@ -1,6 +1,6 @@
-                      chkrootkit V. 0.53-github2
+                         chkrootkit V. 0.59
 
-          Nelson Murilo <nelson@pangeia.com.br> (main author)
+          Nelson Murilo <nmurilo@gmail.com> (main author)
             Klaus Steding-Jessen <jessen@cert.br> (co-author)
 
           This program locally checks for signs of a rootkit.
@@ -220,7 +220,7 @@
  ------------------------
 
  Please send comments, questions and bug reports to
- nelson@pangeia.com.br and jessen@cert.br.
+ nmurilo@gmail.com and jessen@cert.br.
 
  A simple FAQ and Related information about rootkits and security can
  be found at chkrootkit's homepage, http://www.chkrootkit.org.
@@ -361,28 +361,47 @@
                            Operation Windigo ssh backdoor detection 
 			   Minor bug fixes
 
- 10/28/2014 - Version 0.50a fix SucKIT false positive
- 08/16/2016 - Version 0.50b fix for openssh without -G support
-
  10/13/2016 - Version 0.51 Mumblehard backdoor/botnet detection 
 			   Linux.Xor.DDoS Malware
                            Malicious TinyDNS detection 
                            Backdoors.Linux.Mokes.a detection 
 			   Minor bug fixes 
 
- 03/13/2017 - Version 0.52 Linux.Proxy.10 detection 
+ 13/03/2017 - Version 0.52 Linux.Proxy.10 detection 
               strings.c & chkutmp.c bug fixes
 
- 01/29/2018 - Version 0.52-github1 merged from source
 
  01/25/2019 - Version 0.53 Rocke Monero Miner detection
                           Added ss support
 	                  ifconfig.c bug fixes 
                           Minor bug fixes 
 
- 04/29/2019 - Version 0.53-github1 merged from source
+ 12/24/2020 - Version 0.54 PWNLNX4 and 6 Rootkits detection
+			BTRFS bug fix 
+			Fedora bug fix
+			Bug fix release
 
- 04/29/2018 - Version 0.53-github2 enable compiling on MacOS set STATIC
-                                   to "-B static"
+ 06/10/2021 - Version 0.55 Umbreon Linux Rootkit detection 
+			Kinsing.A Backdoor 
+			RotaJakito Backdoor 
+			Minor bug fixes 
+
+ 12/22/2022 - Version 0.56 Kovid rootkit 
+                        Syslogk rootkit 
+                        Minor bug fixes 
+
+ 01/13/2023 - Version 0.57 bug fix release 
+
+ 06/29/2023 - Version 0.58 
+                        New option to avoid scanning network filesystems (-T) 
+                        Kovid Malware
+                        Linux BPFDoor Malware 
+                        Minor bug fixes
+ 05/12/2025 - Version 0.59 
+                        New check: process executed from memory 
+                        New command check: nologin 
+                        XZ Backdoor      
+                        Bootkitty (UEFI bootkit) 
+                        Minor bug fixes
 
  -------------- Thx for using chkrootkit ----------------

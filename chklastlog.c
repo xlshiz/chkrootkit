@@ -7,24 +7,25 @@
    22527 Hamburg
    Germany
 
+   01/0224 - GCC 15 fixes
    02/20/97 - Minimal changes for Linux/FreeBSD port.
    02/25/97 - Another little bit change
    12/26/98 - New Red Hat compatibility
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    01/05/00 - Performance patches
    09/07/00 - Ports for Solaris
    Andre Gustavo de Carvalho Albuquerque
    12/15/00 - Add -f & -l options
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    01/09/01 - Many fixes
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    01/20/01 - More little fixes
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    24/01/01 - Segfault in some systems fixed, Thanks to Manfred Bartz
    02/06/01 - Beter system detection & fix bug in OBSD, Thanks to Rudolf Leitgeb
    09/19/01 - Another Segfault in some systems fixed, Thanks to Andreas Tirok
    06/26/02 - Fix problem with maximum uid number - Thanks to Gerard van Wageningen
-   07/02/02 - Minor fixes - Nelson Murilo, nelson@pangeia.com.br
+   07/02/02 - Minor fixes - Nelson Murilo, nmurilo@gmail.com
    05/05/14 - Minor fixes - Klaus Steding-jessen 
 */
 
@@ -51,7 +52,7 @@ int main () { return 0; }
 #include <lastlog.h>
 #endif
 #include <sys/file.h>
-#ifdef SOLARIS2
+#if defined (SOLARIS2) || defined (linux)
 #include <fcntl.h>
 #endif
 
@@ -77,7 +78,7 @@ int main () { return 0; }
 long total_wtmp_bytes_read=0;
 size_t wtmp_file_size;
 uid_t *uid;
-void read_status();
+void read_status(int signum);
 
 struct s_localpwd {
      int numentries;
@@ -109,8 +110,10 @@ int main(int argc, char*argv[]) {
 	uid_t		*uid;
         char wtmpfile[128], lastlogfile[128];
 
-        memcpy(wtmpfile, WTMP_FILENAME, 127);
-        memcpy(lastlogfile, LASTLOG_FILENAME, 127);
+        memset(wtmpfile, '\0', 128);
+        memset(lastlogfile, '\0', 128);
+        strncpy(wtmpfile, WTMP_FILENAME, 127);
+        strncpy(lastlogfile, LASTLOG_FILENAME, 127);
 
         while (--argc && ++argv) /* poor man getopt */
         {
@@ -167,7 +170,7 @@ int main(int argc, char*argv[]) {
             {
                 if (*uid > MAX_ID)
                 {
-                   fprintf(stderr, "MAX_ID is %ld and current uid is %ld, please check\n\r", MAX_ID, *uid );
+                   fprintf(stderr, "MAX_ID is %u and current uid is %u, please check\n\r", MAX_ID, *uid );
                    exit (1);
 
                 }
@@ -213,7 +216,7 @@ int nonuser(struct utmp utmp_ent)
 }
 #endif
 
-void read_status() {
+void read_status(int signum) {
    double remaining_time;
    static long last_total_bytes_read=0;
    int diff;

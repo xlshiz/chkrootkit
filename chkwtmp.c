@@ -8,15 +8,15 @@
    Germany
 
    02/20/97 - Minimal changes for Linux/FreeBSD port.
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    09/07/00 - Ports for Solaris
    Andre Gustavo <gustavo@anita.visualnet.com.br>
    12/15/00 - Add -f option
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    07/08/04 - fix del counter value (Thanks to Dietrich Raisin)
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
    09/12/05 - fix Segfault (Thanks to Jérémie Andréi)
-   Nelson Murilo, nelson@pangeia.com.br
+   Nelson Murilo, nmurilo@gmail.com
 */
 
 #if __FreeBSD__ > 9 
@@ -30,7 +30,8 @@ int main () { return 0; }
 #include <time.h>
 #include <sys/time.h>
 #include <sys/file.h>
-#ifdef SOLARIS2
+#include <fcntl.h>
+#if defined (SOLARIS2) || defined (linux) 
 #include <fcntl.h>
 #endif
 
@@ -70,7 +71,7 @@ int main(int argc, char*argv[]) {
 	gettimeofday(&mytime, &dummy);
        act_time=mytime.tv_sec;
        wtmpfile[127]='\0';
-       memcpy(wtmpfile, WTMP_FILENAME, 127);
+       strncpy(wtmpfile, WTMP_FILENAME, 127);
        if ( argc == 3 && !memcmp("-f", argv[1], 2) && *argv[2])
           memcpy(wtmpfile, argv[2], 127);
 

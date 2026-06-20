@@ -11,15 +11,15 @@
    Last Changes: Better detection of promisc mode on newer Linux kernels
                  Lantz Moore <lmoore@tump.com>
                  Fix for newer linux kernels, minor fixes
-         	 Nelson Murilo, <nelson@pangeia.com.br>
+         	 Nelson Murilo, <nmurilo@gmail.com>
                  Ports for Solaris
                  Andre Gustavo <gustavo@anita.visualnet.com.br>
                  Port for OpenBSD
-         	 Nelson Murilo, <nelson@pangeia.com.br>
+         	 Nelson Murilo, <nmurilo@gmail.com>
                  Fix wrong output (patched by Sean MacLennan) 
 
-   Author:	Nelson Murilo, <nelson@pangeia.com.br>
-  		Copyright 1997-2003 (C) Pangeia Informatica
+   Author:	Nelson Murilo, <nmurilo@gmail.com>
+  		Copyright 1997-2021 (C) Pangeia Informatica
 
   		This program is free software; you can redistribute it
   		and/or  modify it under  the terms of  the GNU General
