@@ -38,7 +38,7 @@ pop2 pop3 ps pstree rpcinfo rlogind rshd slogin sendmail sshd syslogd tar tcpd \
 tcpdump top telnetd timed traceroute vdir w write"
 
 # Tools
-TOOLS="aliens asp bindshell lkm rexedcs sniffer w55808 wted scalper slapper z2 chkutmp OSX_RSPLUG"
+TOOLS="aliens asp bindshell lkm rexedcs sniffer w55808 wted scalper slapper z2 chkutmp OSX_RSPLUG chkdeleted chksockorph chkpacket chkbpftool getdents64"
 
 # Return Codes
 INFECTED=0
@@ -101,6 +101,127 @@ OSX_RSPLUG (){
       if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
          return ${NOT_INFECTED}
    fi
+}
+
+chkdeleted () {
+    if [ "${ROOTDIR}" != "/" ]; then
+        echo "not tested"
+        return ${NOT_TESTED}
+    fi
+    if [ "${EXPERT}" = "t" ]; then
+        expertmode_output "ls -l /proc/[0-9]*/exe 2>/dev/null | grep deleted"
+        return 5
+    fi
+    DELETED=$(ls -l /proc/[0-9]*/exe 2>/dev/null | grep -c "(deleted)")
+    if [ "$DELETED" -gt 0 ]; then
+        echo "INFECTED: $DELETED process(es) running from deleted binary:"
+        ls -l /proc/[0-9]*/exe 2>/dev/null | grep "(deleted)"
+        return ${INFECTED}
+    else
+        [ "${QUIET}" != "t" ] && echo "nothing found"
+        return ${NOT_INFECTED}
+    fi
+}
+
+chksockorph () {
+    if [ "${ROOTDIR}" != "/" ]; then
+        echo "not tested"
+        return ${NOT_TESTED}
+    fi
+    if [ "${EXPERT}" = "t" ]; then
+        expertmode_output "find /proc/[0-9]*/fd -lname 'socket:*' 2>/dev/null; awk 'NR>1 {print \$10}' /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6 2>/dev/null"
+        return 5
+    fi
+    OWNED=$(find /proc/[0-9]*/fd -lname 'socket:*' 2>/dev/null | \
+        sed 's/.*socket:\[//;s/\]//' | sort -u)
+    NET_INODES=$(awk 'NR>1 {print $10}' \
+        /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6 2>/dev/null | \
+        sort -u)
+    if [ -z "$OWNED" ] || [ -z "$NET_INODES" ]; then
+        echo "not tested: can't read /proc/net or /proc/*/fd"
+        return ${NOT_TESTED}
+    fi
+    ORPHANS=$(comm -23 <(echo "$NET_INODES") <(echo "$OWNED") 2>/dev/null | wc -l)
+    if [ "$ORPHANS" -gt 0 ]; then
+        echo "WARNING: $ORPHANS orphan socket inode(s) (no owning process visible)"
+        return ${INFECTED}
+    else
+        [ "${QUIET}" != "t" ] && echo "nothing found"
+        return ${NOT_INFECTED}
+    fi
+}
+
+chkpacket () {
+    if [ "${ROOTDIR}" != "/" ]; then
+        echo "not tested"
+        return ${NOT_TESTED}
+    fi
+    if [ ! -f /proc/net/packet ]; then
+        [ "${QUIET}" != "t" ] && echo "not tested: no /proc/net/packet"
+        return ${NOT_TESTED}
+    fi
+    if [ "${EXPERT}" = "t" ]; then
+        expertmode_output "cat /proc/net/packet 2>/dev/null; find /proc/[0-9]*/fd -lname 'socket:*' 2>/dev/null"
+        return 5
+    fi
+    PKT_INODES=$(awk 'NR>1 {print $10}' /proc/net/packet 2>/dev/null | sort -u)
+    OWNED=$(find /proc/[0-9]*/fd -lname 'socket:*' 2>/dev/null | \
+        sed 's/.*socket:\[//;s/\]//' | sort -u)
+    if [ -z "$PKT_INODES" ]; then
+        [ "${QUIET}" != "t" ] && echo "nothing found"
+        return ${NOT_INFECTED}
+    fi
+    ORPHANS=$(comm -23 <(echo "$PKT_INODES") <(echo "$OWNED") 2>/dev/null | wc -l)
+    if [ "$ORPHANS" -gt 0 ]; then
+        echo "WARNING: $ORPHANS orphan packet socket(s) (possible sniffer)"
+        return ${INFECTED}
+    else
+        [ "${QUIET}" != "t" ] && echo "nothing found"
+        return ${NOT_INFECTED}
+    fi
+}
+
+chkbpftool () {
+    if [ "${ROOTDIR}" != "/" ]; then
+        echo "not tested"
+        return ${NOT_TESTED}
+    fi
+    if ! command -v bpftool >/dev/null 2>&1; then
+        [ "${QUIET}" != "t" ] && echo "not tested: bpftool not found"
+        return ${NOT_TESTED}
+    fi
+    if [ "${EXPERT}" = "t" ]; then
+        expertmode_output "bpftool prog list 2>/dev/null"
+        return 5
+    fi
+    if bpftool prog list 2>/dev/null | ${egrep} -qi "getdents|filldir|tcp4_seq|tcp6_seq|udp4_seq|udp6_seq|packet_rcv|kill"; then
+        echo "WARNING: BPF program(s) attached to sensitive kernel functions"
+        return ${INFECTED}
+    else
+        [ "${QUIET}" != "t" ] && echo "nothing found"
+        return ${NOT_INFECTED}
+    fi
+}
+
+getdents64 () {
+    if [ "${ROOTDIR}" != "/" ]; then
+        echo "not tested"
+        return ${NOT_TESTED}
+    fi
+    if [ ! -x ./chkgetdents ]; then
+        echo "not tested: can't exec ./chkgetdents"
+        return ${NOT_TESTED}
+    fi
+    if [ "${EXPERT}" = "t" ]; then
+        expertmode_output "./chkgetdents -v"
+        return 5
+    fi
+    if ./chkgetdents; then
+        [ "${QUIET}" != "t" ] && echo "nothing detected"
+        return ${NOT_INFECTED}
+    else
+        return ${INFECTED}
+    fi
 }
 
 #
@@ -2178,10 +2299,19 @@ chk_ldsopreload() {
       then
          STATUS=${INFECTED}
       fi
-   else
-     STATUS=${NOT_TESTED}
-   fi
-   return ${STATUS}
+    else
+      STATUS=${NOT_TESTED}
+    fi
+    if [ -s /etc/ld.so.preload ]; then
+        echo "WARNING: /etc/ld.so.preload is not empty"
+        STATUS=${INFECTED}
+    fi
+    PRELOAD_PROCS=$(grep -l 'LD_PRELOAD' /proc/[0-9]*/environ 2>/dev/null | wc -l)
+    if [ "$PRELOAD_PROCS" -gt 0 ]; then
+        echo "WARNING: LD_PRELOAD found in $PRELOAD_PROCS process(es)"
+        STATUS=${INFECTED}
+    fi
+    return ${STATUS}
 }
 
 chk_basename () {

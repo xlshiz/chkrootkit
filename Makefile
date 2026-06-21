@@ -37,7 +37,7 @@ all:
 	@echo '*** stopping make sense ***'
 	@exec make sense
 
-sense: chklastlog chkwtmp ifpromisc chkproc chkdirs check_wtmpx strings-static chkutmp
+sense: chklastlog chkwtmp ifpromisc chkproc chkdirs check_wtmpx strings-static chkutmp chkgetdents
 
 chklastlog:   chklastlog.c
 	${CC} ${CFLAGS} -o $@ chklastlog.c
@@ -74,5 +74,9 @@ strings-static:   strings.c
 	${CC} ${STATIC} ${LDFLAGS} -o $@ strings.c
 	@strip $@
 
+chkgetdents:   chkgetdents.c
+	${CC} ${LDFLAGS} -o $@ chkgetdents.c
+	@strip $@
+
 clean:
-	rm -f ${OBJS} core chklastlog chkwtmp ifpromisc chkproc chkdirs check_wtmpx strings-static chkutmp
+	rm -f ${OBJS} core chklastlog chkwtmp ifpromisc chkproc chkdirs check_wtmpx strings-static chkutmp chkgetdents
