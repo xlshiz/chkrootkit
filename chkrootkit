@@ -53,6 +53,26 @@ GENERIC_ROOTKIT_LABEL="^/bin/.*sh$|bash|elite$|vejeta|\.ark|iroffer"
 ## BUSYBOX CHECK 
 BUSYBOX=""
 
+# Verbosity level (1=quiet, 2=normal, 3=verbose, 4=debug)
+VERBOSE=2
+
+# Backward compatibility: still set QUIET/EXPERT for internal check functions
+QUIET=""
+EXPERT=""
+
+# Color support
+USE_COLOR=0
+
+# ANSI color codes
+COLOR_RESET=$(printf '\033[0m')
+COLOR_RED=$(printf '\033[0;31m')
+COLOR_GREEN=$(printf '\033[0;32m')
+COLOR_YELLOW=$(printf '\033[0;33m')
+COLOR_BLUE=$(printf '\033[0;34m')
+COLOR_MAGENTA=$(printf '\033[0;35m')
+COLOR_CYAN=$(printf '\033[0;36m')
+COLOR_BOLD=$(printf '\033[1m')
+
 ######################################################################
 # tools functions
 
@@ -69,16 +89,16 @@ w55808 (){
       fi
    done
    if [ ${STATUS} -eq 1 ] ;then
-      echo "Warning: Possible 55808 Worm installed"
+      warn_msg "Warning: Possible 55808 Worm installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
          return ${NOT_INFECTED}
    fi
 }
 
 OSX_RSPLUG (){
        if [ ${SYSTEM} != "Darwin" ]; then 
-        if [ "${QUIET}" != "t" ]; then echo "not tested"; fi
+        if [ "${QUIET}" != "t" ]; then msg_not_tested "not tested"; fi
           return 
        fi
        SAVEIFS=$IFS
@@ -87,7 +107,7 @@ OSX_RSPLUG (){
        OSX_RSPLUG_FILES='/Library/Internet Plug-Ins/QuickTime.xpt;/Library/Internet Plug-Ins/plugins.settings'
 #       echo checking ${OSX_RSPLUG_FILES}
        for i in ${OSX_RSPLUG_FILES} ; do
-               echo searching for "${i}"
+               verbose_msg 3 "searching for ${i}"
                if [ -e "${i}" ] ; then
                        STATUS=1
                fi
@@ -95,17 +115,17 @@ OSX_RSPLUG (){
        IFS=$SAVEIFS
 
    if [ ${STATUS} -eq 1 ] ;then
-      echo "Warning: OSX.RSPlug.A Trojan Horse found"
+      warn_msg "Warning: OSX.RSPlug.A Trojan Horse found"
       return ${INFECTED}
    else
-      if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
          return ${NOT_INFECTED}
    fi
 }
 
 chkdeleted () {
     if [ "${ROOTDIR}" != "/" ]; then
-        echo "not tested"
+        msg_not_tested "not tested"
         return ${NOT_TESTED}
     fi
     if [ "${EXPERT}" = "t" ]; then
@@ -114,18 +134,18 @@ chkdeleted () {
     fi
     DELETED=$(ls -l /proc/[0-9]*/exe 2>/dev/null | grep -c "(deleted)")
     if [ "$DELETED" -gt 0 ]; then
-        echo "INFECTED: $DELETED process(es) running from deleted binary:"
+        msg_infected "INFECTED: $DELETED process(es) running from deleted binary:"
         ls -l /proc/[0-9]*/exe 2>/dev/null | grep "(deleted)"
         return ${INFECTED}
     else
-        [ "${QUIET}" != "t" ] && echo "nothing found"
+        [ "${QUIET}" != "t" ] && msg_ok "nothing found"
         return ${NOT_INFECTED}
     fi
 }
 
 chksockorph () {
     if [ "${ROOTDIR}" != "/" ]; then
-        echo "not tested"
+        msg_not_tested "not tested"
         return ${NOT_TESTED}
     fi
     if [ "${EXPERT}" = "t" ]; then
@@ -138,26 +158,31 @@ chksockorph () {
         /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6 2>/dev/null | \
         sort -u)
     if [ -z "$OWNED" ] || [ -z "$NET_INODES" ]; then
-        echo "not tested: can't read /proc/net or /proc/*/fd"
+        msg_not_tested "not tested: can't read /proc/net or /proc/*/fd"
         return ${NOT_TESTED}
     fi
-    ORPHANS=$(comm -23 <(echo "$NET_INODES") <(echo "$OWNED") 2>/dev/null | wc -l)
+    ORPHAN_LIST=$(comm -23 <(echo "$NET_INODES") <(echo "$OWNED") 2>/dev/null)
+    ORPHANS=$(echo "${ORPHAN_LIST}" | wc -l)
     if [ "$ORPHANS" -gt 0 ]; then
-        echo "WARNING: $ORPHANS orphan socket inode(s) (no owning process visible)"
+        warn_msg "WARNING: $ORPHANS orphan socket inode(s) (no owning process visible)"
+        if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 5 ]; then
+            echo "  Orphan socket inodes: ${ORPHAN_LIST}"
+            echo "  Inspect with: lsof -i | grep <inode>  or  chkrootkit -x"
+        fi
         return ${INFECTED}
     else
-        [ "${QUIET}" != "t" ] && echo "nothing found"
+        [ "${QUIET}" != "t" ] && msg_ok "nothing found"
         return ${NOT_INFECTED}
     fi
 }
 
 chkpacket () {
     if [ "${ROOTDIR}" != "/" ]; then
-        echo "not tested"
+        msg_not_tested "not tested"
         return ${NOT_TESTED}
     fi
     if [ ! -f /proc/net/packet ]; then
-        [ "${QUIET}" != "t" ] && echo "not tested: no /proc/net/packet"
+        [ "${QUIET}" != "t" ] && msg_not_tested "not tested: no /proc/net/packet"
         return ${NOT_TESTED}
     fi
     if [ "${EXPERT}" = "t" ]; then
@@ -168,26 +193,31 @@ chkpacket () {
     OWNED=$(find /proc/[0-9]*/fd -lname 'socket:*' 2>/dev/null | \
         sed 's/.*socket:\[//;s/\]//' | sort -u)
     if [ -z "$PKT_INODES" ]; then
-        [ "${QUIET}" != "t" ] && echo "nothing found"
+        [ "${QUIET}" != "t" ] && msg_ok "nothing found"
         return ${NOT_INFECTED}
     fi
-    ORPHANS=$(comm -23 <(echo "$PKT_INODES") <(echo "$OWNED") 2>/dev/null | wc -l)
+    ORPHAN_LIST=$(comm -23 <(echo "$PKT_INODES") <(echo "$OWNED") 2>/dev/null)
+    ORPHANS=$(echo "${ORPHAN_LIST}" | wc -l)
     if [ "$ORPHANS" -gt 0 ]; then
-        echo "WARNING: $ORPHANS orphan packet socket(s) (possible sniffer)"
+        warn_msg "WARNING: $ORPHANS orphan packet socket(s) (possible sniffer)"
+        if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 5 ]; then
+            echo "  Orphan packet inodes: ${ORPHAN_LIST}"
+            echo "  Inspect with: cat /proc/net/packet  or  chkrootkit -x"
+        fi
         return ${INFECTED}
     else
-        [ "${QUIET}" != "t" ] && echo "nothing found"
+        [ "${QUIET}" != "t" ] && msg_ok "nothing found"
         return ${NOT_INFECTED}
     fi
 }
 
 chkbpftool () {
     if [ "${ROOTDIR}" != "/" ]; then
-        echo "not tested"
+        msg_not_tested "not tested"
         return ${NOT_TESTED}
     fi
     if ! command -v bpftool >/dev/null 2>&1; then
-        [ "${QUIET}" != "t" ] && echo "not tested: bpftool not found"
+        [ "${QUIET}" != "t" ] && msg_not_tested "not tested: bpftool not found"
         return ${NOT_TESTED}
     fi
     if [ "${EXPERT}" = "t" ]; then
@@ -195,31 +225,56 @@ chkbpftool () {
         return 5
     fi
     if bpftool prog list 2>/dev/null | ${egrep} -qi "getdents|filldir|tcp4_seq|tcp6_seq|udp4_seq|udp6_seq|packet_rcv|kill"; then
-        echo "WARNING: BPF program(s) attached to sensitive kernel functions"
+        warn_msg "WARNING: BPF program(s) attached to sensitive kernel functions"
+        if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 5 ]; then
+            echo "  Inspect with: chkrootkit -x  (shows all BPF programs)"
+        fi
         return ${INFECTED}
     else
-        [ "${QUIET}" != "t" ] && echo "nothing found"
+        [ "${QUIET}" != "t" ] && msg_ok "nothing found"
         return ${NOT_INFECTED}
     fi
 }
 
 getdents64 () {
     if [ "${ROOTDIR}" != "/" ]; then
-        echo "not tested"
+        msg_not_tested "not tested"
         return ${NOT_TESTED}
     fi
     if [ ! -x ./chkgetdents ]; then
-        echo "not tested: can't exec ./chkgetdents"
+        msg_not_tested "not tested: can't exec ./chkgetdents"
         return ${NOT_TESTED}
     fi
     if [ "${EXPERT}" = "t" ]; then
         expertmode_output "./chkgetdents -v"
         return 5
     fi
-    if ./chkgetdents; then
-        [ "${QUIET}" != "t" ] && echo "nothing detected"
+    # Use -v for verbose mode to show individual hidden PIDs
+    GETDENTS_VERBOSE=
+    [ "${VERBOSE}" -ge 3 ] && GETDENTS_VERBOSE="-v"
+    if [ "${USE_COLOR}" = "1" ]; then
+        GETDENTS_OUT=$(./chkgetdents ${GETDENTS_VERBOSE} 2>&1)
+        RET=$?
+        if [ -n "${GETDENTS_OUT}" ]; then
+            echo "${GETDENTS_OUT}" | sed "s/WARNING:/${COLOR_YELLOW}&${COLOR_RESET}/"
+            if [ "${VERBOSE}" -ge 3 ]; then
+                echo "  Inspect with: ls -l /proc/[PID]/exe"
+            else
+                echo "  Inspect with: chkrootkit -v  (shows individual hidden PIDs)"
+            fi
+        fi
+        [ ${RET} -eq 0 ] && [ "${QUIET}" != "t" ] && msg_ok "nothing detected"
+        return ${RET}
+    fi
+    if ./chkgetdents ${GETDENTS_VERBOSE}; then
+        [ "${QUIET}" != "t" ] && msg_ok "nothing detected"
         return ${NOT_INFECTED}
     else
+        if [ "${VERBOSE}" -ge 3 ]; then
+            echo "  Inspect with: ls -l /proc/[PID]/exe"
+        else
+            echo "  Inspect with: chkrootkit -v  (shows individual hidden PIDs)"
+        fi
         return ${INFECTED}
     fi
 }
@@ -259,9 +314,9 @@ slapper (){
       fi
    done
    if [ ${STATUS} -eq 1 ] ;then
-      echo "Warning: Possible Slapper Worm installed ($file_port)"
+      warn_msg "Warning: Possible Slapper Worm installed ($file_port)"
    else
-      if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
          return ${NOT_INFECTED}
    fi
 }
@@ -285,9 +340,9 @@ scalper (){
       fi
    done
    if [ ${STATUS} -eq 1 ] ;then
-      echo "Warning: Possible Scalper Worm installed"
+      warn_msg "Warning: Possible Scalper Worm installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
          return ${NOT_INFECTED}
    fi
 }
@@ -304,18 +359,18 @@ asp (){
     fi
 
     if ${egrep} "^asp" ${ROOTDIR}etc/inetd.conf >/dev/null 2>&1; then
-        echo "Warning: Possible Ramen Worm installed in inetd.conf"
+        warn_msg "Warning: Possible Ramen Worm installed in inetd.conf"
         STATUS=${INFECTED}
     fi
     if [ ${CMD} = "asp"  -o ${CMD} = "${ROOTDIR}asp" ]; then
-        if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+        if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
         return ${NOT_INFECTED}
     fi
     if ${strings} -a ${CMD} | ${egrep} "${ASP_LABEL}" >/dev/null 2>&1; then
        # echo "INFECTED"
        STATUS=${INFECTED}
     else
-        if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+        if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
         return ${NOT_INFECTED}
     fi
     return ${STATUS}
@@ -323,7 +378,7 @@ asp (){
 
 sniffer () {
     if [ "${ROOTDIR}" != "/" ]; then
-      echo "not tested"
+      msg_not_tested "not tested"
       return ${NOT_TESTED}
     fi
 
@@ -336,7 +391,7 @@ sniffer () {
         return 5
     fi
     if [ ! -x ./ifpromisc ]; then
-      echo "not tested: can't exec ./ifpromisc"
+      msg_not_tested "not tested: can't exec ./ifpromisc"
       return ${NOT_TESTED}
     else
       [ "${QUIET}" != "t" ] && ./ifpromisc -v || ./ifpromisc -q
@@ -345,18 +400,18 @@ sniffer () {
 
 chkutmp() {
     if [ ! -x ./chkutmp -o ${mode} = "pm" ]; then
-      echo "not tested: can't exec ./chkutmp"
+      msg_not_tested "not tested: can't exec ./chkutmp"
       return ${NOT_TESTED}
     fi
     if ./chkutmp
     then
-      if [ "${QUIET}" != "t" ]; then echo "chkutmp: nothing deleted"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "chkutmp: nothing deleted"; fi
     fi
 }
 
 z2 () {
     if [ ! -x ./chklastlog ]; then
-      echo "not tested: can't exec ./chklastlog"
+      msg_not_tested "not tested: can't exec ./chklastlog"
       return ${NOT_TESTED}
     fi
 
@@ -364,7 +419,7 @@ z2 () {
     LASTLOG=`loc lastlog lastlog "${ROOTDIR}var/log ${ROOTDIR}var/adm"`
 
     if [ ! -f $WTMP -a ! -f $LASTLOG ]; then
-       echo "not tested: not found wtmp and/or lastlog file"
+       msg_not_tested "not tested: not found wtmp and/or lastlog file"
        return ${NOT_TESTED}
     fi
 
@@ -375,19 +430,19 @@ z2 () {
 
     if ./chklastlog -f ${ROOTDIR}${WTMP} -l ${ROOTDIR}${LASTLOG}
     then
-      if [ "${QUIET}" != "t" ]; then echo "chklastlog: nothing deleted"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "chklastlog: nothing deleted"; fi
     fi
 }
 
 wted () {
     if [ ! -x ./chkwtmp ]; then
-      echo "not tested: can't exec ./chkwtmp"
+      msg_not_tested "not tested: can't exec ./chkwtmp"
       return ${NOT_TESTED}
     fi
 
    if [ "$SYSTEM" = "SunOS" ]; then
        if [ ! -x ./check_wtmpx ]; then
-          echo "not tested: can't exec ./check_wtmpx"
+          msg_not_tested "not tested: can't exec ./check_wtmpx"
        else
           if [ "${EXPERT}" = "t" ]; then
              expertmode_output "./check_wtmpx"
@@ -397,7 +452,7 @@ wted () {
              if ./check_wtmpx
                 then
                 if [ "${QUIET}" != "t" ]; then \
-                   echo "check_wtmpx: nothing deleted in /var/adm/wtmpx"; fi
+                   msg_ok "check_wtmpx: nothing deleted in /var/adm/wtmpx"; fi
              fi
 	  fi
        fi
@@ -450,7 +505,7 @@ bindshell () {
 7222
 "
     if [ "${ROOTDIR}" != "/" ]; then
-	echo "not tested"
+	msg_not_tested "not tested"
 	return ${NOT_TESTED}
     fi
     
@@ -464,9 +519,9 @@ bindshell () {
     PI="$(localports | grep -xF -e "$PORTS")"
     if [ "${PI}" != "" ]
     then
-	echo "INFECTED PORTS: ($PI)"
+	msg_infected "INFECTED PORTS: ($PI)"
     else
-	if [ "${QUIET}" != "t" ]; then echo "not infected"; fi
+	if [ "${QUIET}" != "t" ]; then msg_ok "not infected"; fi
     fi
 }
 
@@ -478,7 +533,7 @@ lkm ()
        [  -x ./chkproc -a "`find /proc -maxdepth 1 2>/dev/null| wc -l`" -gt 1 ] && prog="./chkproc"
       [  -x ./chkdirs ] && prog="$prog ./chkdirs"
       if [ "$prog" = "" -o ${mode} = "pm" ]; then
-         echo "not tested: can't exec $prog"
+         msg_not_tested "not tested: can't exec $prog"
          return ${NOT_TESTED}
       fi
 
@@ -495,18 +550,18 @@ lkm ()
       ### adore LKM
       [ -r /proc/$KALLSYMS ] && \
       if `${egrep} -i adore < /proc/$KALLSYMS >/dev/null 2>&1`; then
-         echo "Warning: Adore LKM installed"
+         warn_msg "Warning: Adore LKM installed"
       fi
 
       ### sebek LKM (Adore based)
       [ -r /proc/$KALLSYMS ] && \
       if `${egrep} -i sebek < /proc/$KALLSYMS >/dev/null 2>&1`; then
-         echo "Warning: Sebek LKM installed"
+         warn_msg "Warning: Sebek LKM installed"
       fi
 
       ### knark LKM
       if [ -d /proc/knark ]; then
-         echo "Warning: Knark LKM installed"
+         warn_msg "Warning: Knark LKM installed"
       fi
       if [ "$SYSTEM" = "Linux" ]; then 
          F=`$ps -V 2>/dev/null | wc -w`
@@ -518,9 +573,9 @@ lkm ()
            ${echo} "*** PV=$PV ***"
       fi
       if ./chkproc -p ${PV}; then
-         if [ "${QUIET}" != "t" ]; then echo "chkproc: nothing detected"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "chkproc: nothing detected"; fi
       else
-         echo "chkproc: Warning: Possible LKM Trojan installed"
+         warn_msg "chkproc: Warning: Possible LKM Trojan installed"
       fi
       dirs="/tmp"
       for i in /usr/share /usr/bin /usr/sbin /lib; do
@@ -529,19 +584,33 @@ lkm ()
          fi 
       done
       if ./chkdirs $dirs;  then
-         if [ "${QUIET}" != "t" ]; then echo "chkdirs: nothing detected"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "chkdirs: nothing detected"; fi
       else
-	    echo "chkdirs: Warning: Possible LKM Trojan installed"
+	    warn_msg "chkdirs: Warning: Possible LKM Trojan installed"
       fi
    else
          if [ "${QUIET}" != "t" ]; then echo "chkproc: not tested"; fi
    fi
 }
 
+# Helper for aliens sub-checks: run a find command and report results
+aliens_check() {
+    local _label="$1"
+    local _findcmd="$2"
+    local _result
+    _result=$(eval "${_findcmd}" 2>/dev/null)
+    if [ -n "${_result}" ]; then
+        echo
+        echo "${_result}"
+    else
+        if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
+    fi
+}
+
 aliens () {
    if [ "${EXPERT}" = "t" ]; then
         ### Process executed from memory 
-        expertmode_output "ls -alR /proc/*/exe 2>/dev/null | ${grep} '^\/memfd:.*?\(deleted\)'"
+        expertmode_output "ls -alR /proc/*/exe 2>/dev/null | ${grep} '^/memfd:.*?\(deleted\)'"
         ### suspicious files
         FILES="usr/bin/sourcemask usr/bin/ras2xm usr/sbin/in.telnet \
 sbin/vobiscum  usr/sbin/jcd usr/sbin/atd2 usr/bin/.etc usr/bin/xstat \
@@ -867,7 +936,7 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    for i in ${dir}; do
       if [ -d ${ROOTDIR}${i} ]; then
          echo
-         echo "Suspect directory ${i} FOUND! Looking for sniffer logs"
+         warn_msg "Suspect directory ${i} FOUND! Looking for sniffer logs"
             files=`${find} ${ROOTDIR}${i}`
          echo
          echo ${files}
@@ -882,36 +951,33 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    if [ "${files}" = "" ]; then
         if [ "${QUIET}" != "t" ]; then echo "no suspect files"; fi
    fi
-   if [ "${QUIET}" != "t" ]; then \
+   ### Sniffer's logs (converted to aliens_check)
+   if [ "${VERBOSE}" -ge 2 ]; then \
       printn "Searching for sniffer's logs, it may take a while... "; fi
-   files=`${find} ${ROOTDIR}dev ${ROOTDIR}tmp ${ROOTDIR}lib ${ROOTDIR}etc ${ROOTDIR}var \
-   ${findargs} \( -name "tcp.log" -o -name ".linux-sniff" -o -name "sniff-l0g" -o -name "core_" \) \
-   2>/dev/null`
-   if [ "${files}" = "" ]
-   then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
-   else
+   aliens_check "sniffer logs" "${find} ${ROOTDIR}dev ${ROOTDIR}tmp ${ROOTDIR}lib ${ROOTDIR}etc ${ROOTDIR}var \
+   ${findargs} \( -name \"tcp.log\" -o -name \".linux-sniff\" -o -name \"sniff-l0g\" -o -name \"core_\" \) \
+   2>/dev/null"
+
+   ### Process executed from memory (converted to aliens_check)
+   if [ "${VERBOSE}" -ge 2 ]; then \
+      printn "Searching for process executed from memory... "; fi
+   _memfd=$(ls -alR /proc/*/exe 2>/dev/null | ${grep} "^/memfd:.*?\(deleted\)")
+   if [ -n "${_memfd}" ]; then
       echo
-      echo ${files}
+      msg_infected "INFECTED: Possible process running from memory:"
+      echo "${_memfd}"
+   else
+      if [ "${VERBOSE}" -ge 2 ]; then msg_ok "nothing found"; fi
    fi
 
-   ### Process executed from memory
-   if [ "${QUIET}" != "t" ]; then printn \
-      "Searching for process executed from memory... "; fi
-      ls -alR /proc/*/exe 2>/dev/null | ${grep} "^\/memfd:.*?\(deleted\)" &&
-      echo "INFECTED: Possible process running from memory:" ||
-      {
-          [ "${QUIET}" != "t" ] && echo "nothing found"
-      }
-
-   ### HiDrootkit
-   if [ "${QUIET}" != "t" ]; then printn \
-      "Searching for HiDrootkit's default dir... "; fi
+   ### HiDrootkit (converted to aliens_check)
+   if [ "${VERBOSE}" -ge 2 ]; then \
+      printn "Searching for HiDrootkit's default dir... "; fi
    if [ -d ${ROOTDIR}var/lib/games/.k ]
    then
-      echo "Possible HiDrootkit installed"
+      warn_msg "Possible HiDrootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${VERBOSE}" -ge 2 ]; then msg_ok "nothing found"; fi
    fi
 
    ### t0rn
@@ -921,9 +987,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
         -d ${ROOTDIR}usr/src/.puta  -o -r ${ROOTDIR}lib/ldlib.tk -o \
         -d ${ROOTDIR}usr/info/.t0rn ]
    then
-      echo "Possible t0rn rootkit installed"
+      warn_msg "Possible t0rn rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### t0rn v8
@@ -935,9 +1001,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    if [ "`find ${LIBS} -name libproc.a 2> /dev/null`" != "" -a \
        "$SYSTEM" != "FreeBSD" ]
    then
-      echo "Possible t0rn v8 \(or variation\) rootkit installed"
+      warn_msg "Possible t0rn v8 \(or variation\) rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### Lion Worm
@@ -946,9 +1012,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    if [ -d ${ROOTDIR}usr/info/.torn -o -d ${ROOTDIR}dev/.lib -o \
         -f ${ROOTDIR}bin/in.telnetd -o -f ${ROOTDIR}bin/mjy ]
    then
-         echo "Possible Lion worm installed"
+         warn_msg "Possible Lion worm installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### RSHA rootkit
@@ -962,9 +1028,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
 -o -d "${ROOTDIR}etc/rc.d/rsha" \
 -o -d "${ROOTDIR}etc/rc.d/arch/alpha/lib/.lib" ]
    then
-      echo "Possible RSHA's rootkit installed"
+      warn_msg "Possible RSHA's rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### RH-Sharpe rootkit
@@ -978,9 +1044,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
 -o -r "${ROOTDIR}usr/bin/vadim" -o -r "${ROOTDIR}usr/bin/slice" \
 -o -r "${ROOTDIR}usr/bin/cleaner" -o -r "${ROOTDIR}usr/include/rpcsvc/du" ]
    then
-      echo "Possible RH-Sharpe's rootkit installed"
+      warn_msg "Possible RH-Sharpe's rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### ark rootkit
@@ -989,9 +1055,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
 
    if [ -d ${ROOTDIR}dev/ptyxx -o -r "${ROOTDIR}usr/lib/.ark?" -o \
         -d ${ROOTDIR}usr/doc/"... " ]; then
-      echo "Possible Ambient's rootkit \(ark\) installed"
+      warn_msg "Possible Ambient's rootkit \(ark\) installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### suspicious files and dirs
@@ -1006,7 +1072,7 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    dirs=`${find} ${DIR} -type d -name ".*"`
    if [ "${files}" = "" -a "${dirs}" = "" ]
       then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
       echo
       echo ${files}
@@ -1020,12 +1086,12 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    if ${egrep} "^kork" ${ROOTDIR}etc/passwd > /dev/null 2>&1  || \
  ${egrep} "^ *666 " ${ROOTDIR}etc/inetd.conf > /dev/null 2>&1 ;
       then
-         echo "Possible LPD worm installed"
+         warn_msg "Possible LPD worm installed"
       elif [ -d ${ROOTDIR}dev/.kork -o -f ${ROOTDIR}bin/.ps -o  \
 -f ${ROOTDIR}bin/.login ]; then
-      echo "Possible LPD worm installed"
+      warn_msg "Possible LPD worm installed"
       else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### Ramem Worm
@@ -1035,9 +1101,9 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
    if [ -d ${ROOTDIR}usr/src/.poop -o -f \
         ${ROOTDIR}tmp/ramen.tgz -o -f ${ROOTDIR}etc/xinetd.d/asp ]
    then
-      echo "Possible Ramen worm installed"
+      warn_msg "Possible Ramen worm installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
 
    fi
 
@@ -1047,7 +1113,7 @@ etc/ld.so.hash sbin/init.zk usr/lib/in.httpd usr/lib/in.pop3d nlsadmin"
 
    files=`${find} ${ROOTDIR}usr/bin -name mailrc`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1080,7 +1146,7 @@ zxcvbnm.cgi secure.cgi ubb.cgi r57shell.php"
       done
    done
    if [ "${files}" = ""  ]; then
-     if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+     if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1091,7 +1157,7 @@ zxcvbnm.cgi secure.cgi ubb.cgi r57shell.php"
 
    files=`${find} ${CGIDIR} -name last.cgi`
    if [ "${files}" = ""  ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1102,7 +1168,7 @@ zxcvbnm.cgi secure.cgi ubb.cgi r57shell.php"
    files=`${find} ${ROOTDIR}usr/lib ${ROOTDIR}usr/bin -name red.tar -o \
 -name start.sh -o -name klogd.o -o -name 0anacron-bak -o -name adore`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
      files=`${find} ${ROOTDIR}usr/lib/lib ${ROOTDIR}usr/lib/libt 2>/dev/null`
@@ -1116,7 +1182,7 @@ zxcvbnm.cgi secure.cgi ubb.cgi r57shell.php"
 ${find} ${ROOTDIR}usr/bin -type d -name dir || \
 ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1126,7 +1192,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
 
    files=`${find} ${ROOTDIR}dev -name chr`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1135,7 +1201,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ];then printn "Searching for Sadmind/IIS Worm... "; fi
    files=`${find} ${ROOTDIR}dev/cuc 2> /dev/null`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1145,7 +1211,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    files=`${find} ${ROOTDIR}lib/defs ${ROOTDIR}usr/lib/libpikapp.a \
 2> /dev/null`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1158,9 +1224,9 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       [ -f ${ROOTDIR}usr/include/cron.h ] || [ -f ${ROOTDIR}usr/include/file.h ] || \
       [ -f ${ROOTDIR}usr/include/proc.h ] || [ -f ${ROOTDIR}usr/include/syslogs.h ] || \
       [ -f ${ROOTDIR}usr/include/chk.h ]; then
-         echo "Warning: Possible Showtee Rootkit installed"
+         warn_msg "Warning: Possible Showtee Rootkit installed"
       else
-      if  [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if  [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ###
@@ -1170,7 +1236,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    files=`${find} ${ROOTDIR}usr/bin/xchk ${ROOTDIR}usr/bin/xsf \
 2> /dev/null`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1180,7 +1246,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ];then printn "Searching for T.R.K... "; fi
    files=`${find} ${ROOTDIR}usr/bin -name xchk -o -name xsf >/dev/null 2>&1`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1190,7 +1256,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ];then printn "Searching for Mithra... "; fi
    files=`${find} ${ROOTDIR}usr/lib/locale -name uboot 2> /dev/null`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1201,7 +1267,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       if [ "${QUIET}" != "t" ];then printn "Searching for OBSD rk v1... "; fi
       files=`${find} ${ROOTDIR}usr/lib/security 2>/dev/null`
       if [ "${files}" = "" -o "${SYSTEM}" = "HP-UX" ]; then
-         if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
       else
         echo "${files}"
       fi
@@ -1212,7 +1278,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${QUIET}" != "t" ];then printn "Searching for LOC rootkit... "; fi
    files=`find ${ROOTDIR}tmp -name xp -o -name kidd0.c 2>/dev/null`
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
      loc epic epic $pth
@@ -1227,7 +1293,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       fi
    done
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
       echo "${files}"
    fi
@@ -1236,9 +1302,9 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ -f ${ROOTDIR}etc/rc.d/init.d/network ]; then
       if [ "${QUIET}" != "t" ];then printn "Searching for HKRK rootkit... "; fi
       if ${egrep} "\.hk" ${ROOTDIR}etc/rc.d/init.d/network 2>/dev/null ; then
-        echo "Warning: /etc/rc.d/init.d/network INFECTED"
+        warn_msg "Warning: /etc/rc.d/init.d/network INFECTED"
       else
-         if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
       fi
    fi
 
@@ -1248,12 +1314,12 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       if [ ${SYSTEM} != "HP-UX" ] && ( ${strings} ${ROOTDIR}sbin/init | ${egrep} '\.sniffer'   || \
 	      cat ${ROOTDIR}/proc/1/maps | ${egrep} "init." ) >/dev/null 2>&1
         then
-        echo "Warning: ${ROOTDIR}sbin/init INFECTED"
+        warn_msg "Warning: ${ROOTDIR}sbin/init INFECTED"
       else
          if [ -d ${ROOTDIR}/dev/.golf ]; then
-            echo "Warning: Suspect directory ${ROOTDIR}dev/.golf"
+            warn_msg "Warning: Suspect directory ${ROOTDIR}dev/.golf"
 	 else
-            if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+            if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
 	 fi
       fi
    fi
@@ -1261,17 +1327,17 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    ### Volc
    if [ "${QUIET}" != "t" ];then printn "Searching for Volc rootkit... "; fi
    if [ -f ${ROOTDIR}usr/bin/volc -o -f ${ROOTDIR}usr/lib/volc ] ; then
-      echo "Warning: Possible Volc rootkit installed"
+      warn_msg "Warning: Possible Volc rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### Gold2
    if [ "${QUIET}" != "t" ];then printn "Searching for Gold2 rootkit... "; fi
    if [ -f ${ROOTDIR}usr/bin/ishit ] ; then
-      echo "Warning: Possible Gold2 rootkit installed"
+      warn_msg "Warning: Possible Gold2 rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### TC2 Worm
@@ -1280,53 +1346,53 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ -d ${ROOTDIR}usr/info/.tc2k -o -d ${ROOTDIR}usr/bin/util -o \
         -f ${ROOTDIR}usr/sbin/initcheck  -o -f ${ROOTDIR}usr/sbin/ldb ]
    then
-         echo "Possible TC2 Worm installed"
+         warn_msg "Possible TC2 Worm installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### ANONOYING Rootkit
    if [ "${QUIET}" != "t" ]; then \
       printn "Searching for Anonoying rootkit default files and dirs... "; fi
    if [ -f ${ROOTDIR}usr/sbin/mech -o -f ${ROOTDIR}usr/sbin/kswapd ]; then
-         echo "Possible anonoying rootkit installed"
+         warn_msg "Possible anonoying rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### ZK Rootkit
    if [ "${QUIET}" != "t" ]; then \
       printn "Searching for ZK rootkit default files and dirs... "; fi
    if [ -f ${ROOTDIR}etc/sysconfig/console/load.zk ]; then
-         echo "Possible ZK rootkit installed"
+         warn_msg "Possible ZK rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
    ### ShKit
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for ShKit rootkit default files and dirs... "; fi
    if [ -f ${ROOTDIR}lib/security/.config -o -f ${ROOTDIR}etc/ld.so.hash ]; then
-         echo "Possible ShKit rootkit installed"
+         warn_msg "Possible ShKit rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### AjaKit
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for AjaKit rootkit default files and dirs... "; fi
       if [ -d ${ROOTDIR}lib/.ligh.gh -o -d ${ROOTDIR}dev/tux ]; then
-         echo "Possible AjaKit rootkit installed"
+         warn_msg "Possible AjaKit rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### zaRwT
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for zaRwT rootkit default files and dirs... "; fi
       if [ -f ${ROOTDIR}bin/imin -o -f ${ROOTDIR}bin/imout ]; then
-         echo "Possible zaRwT rootkit installed"
+         warn_msg "Possible zaRwT rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### Madalin rootkit
@@ -1334,9 +1400,9 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Madalin rootkit default files... "; fi
    D=${ROOTDIR}usr/include
    if [ -f $D/icekey.h -o -f $D/iceconf.h -o -f $D/iceseed.h ]; then
-       echo "Possible Madalin rootkit installed"
+       warn_msg "Possible Madalin rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### Fu rootkit
@@ -1344,27 +1410,27 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Fu rootkit default files... "; fi
    if [ -f ${ROOTDIR}sbin/xc -o -f ${ROOTDIR}bin/.lib -o \
         -f ${ROOTDIR}usr/include/ivtype.h ]; then
-      echo "Possible Fu rootkit INSTALLED"
+      warn_msg "Possible Fu rootkit INSTALLED"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## Kenga3 Rookit
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Kenga3 rotkit default files... "; fi
    if [ -d "${ROOTDIR}usr/include/. ." ]; then
-      echo "Possible Kenga3 rootkit INSTALLED"
+      warn_msg "Possible Kenga3 rootkit INSTALLED"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ### ESRK
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for ESRK rootkit default files... "; fi
    if [ -d "${ROOTDIR}usr/lib/tcl5.3" ]; then
-      echo "Possible ESRK rootkit INSTALLED"
+      warn_msg "Possible ESRK rootkit INSTALLED"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## rootedoor
@@ -1373,20 +1439,20 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    found=0
    for i in `$echo $PATH|tr -s ':' ' '`; do
       if [ -f "${ROOTDIR}${i}/rootedoor" ]; then
-         echo "Possible rootedoor INSTALLED in ${ROOTDIR}${i}"
+         warn_msg "Possible rootedoor INSTALLED in ${ROOTDIR}${i}"
 	 found=1
       fi
    done
    [ "${found}" = "0"  ] &&\
-   if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+   if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
 
    ### ENYELKM
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for ENYELKM rootkit default files... "; fi
    if [ -d "${ROOTDIR}etc/.enyelkmOCULTAR.ko" ]; then
-      echo "Possible ENYELKM rootkit installed"
+      warn_msg "Possible ENYELKM rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## Common SSH-SCANNERS
@@ -1394,7 +1460,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for common ssh-scanners default files... "; fi
    files="`${find} ${ROOTDIR}tmp ${ROOTDIR}var/tmp ${findargs} -name vuln.txt -o -name ssh-scan -o -name pscan2 2> /dev/null`"
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi
@@ -1405,19 +1471,19 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Linux/Ebury - Operation Windigo ssh... "; fi
    if $ssh -V 2>&1 | ${egrep} "OpenSSH_[1-5]\.|OpenSSH_6\.[-0-7]" >/dev/null; then
       if $ssh -G 2>&1 | grep -e illegal -e unknow > /dev/null; then 
-         if [ "${QUIET}" != "t" ]; then echo "nothing found "; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found "; fi
       else
-         echo "Possible Linux/Ebury 1.4 - Operation Windigo installed" 
+         warn_msg "Possible Linux/Ebury 1.4 - Operation Windigo installed" 
       fi
    fi
    if [ ! -f "${ROOTDIR}${LIBKEY}" ]; then 
       if [ "${QUIET}" != "t" ]; then 
-         echo "not tested"; fi
+         msg_not_tested "not tested"; fi
    else
       if ${strings} -a ${ROOTDIR}${LIBKEY} | ${egrep} "libns2|libns5|libpw3|libpw5|libsbr|libslr" >/dev/null; then 
-         echo "Possible Linux/Ebury 1.6 - Operation Windigo installed"
+         warn_msg "Possible Linux/Ebury 1.6 - Operation Windigo installed"
       else
-         if [ "${QUIET}" != "t" ]; then echo "nothing found "; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found "; fi
       fi
    fi    
    ##
@@ -1426,16 +1492,16 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for 64-bit Linux Rootkit ... "; fi
    if ${egrep} module_init ${ROOTDIR}etc/rc.local >/dev/null 2>&1 || \
       ${ls} ${ROOTDIR}/usr/local/hide >/dev/null 2>&1; then
-      echo "Possible 64-bit Linux Rootkit"
+      warn_msg "Possible 64-bit Linux Rootkit"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
    
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for 64-bit Linux Rootkit modules... "; fi
    files="`${find} ${ROOTDIR}/lib/modules ${findargs} -name module_init.ko 2> /dev/null`"
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi  
@@ -1446,12 +1512,12 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ -e ${ROOTDIR}var/spool/cron/crontabs ]; then 
       cat ${ROOTDIR}var/spool/cron/crontabs/* 2>/dev/null | ${egrep} "var/tmp"  
       if [ $? -ne 0 ] ; then 
-         if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
       else 
-         echo "Possible Mumblehard backdoor installed"
+         warn_msg "Possible Mumblehard backdoor installed"
       fi
    else 
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
    
    ## Backdoor.Linux.Mokes.a 
@@ -1459,7 +1525,7 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Backdoor.Linux.Mokes.a ... "; fi
    files="`${find} ${ROOTDIR}tmp/ ${findargs} -name "ss0-[0-9]*" -o -name "kk-[0-9]*"   2> /dev/null`"
    if [ "${files}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo "${files}"
    fi  
@@ -1469,9 +1535,9 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Malicious TinyDNS ... "; fi
    files="`${find} "${ROOTDIR}home/ ./" 2> /dev/null`"
    if [ "${files}" = "" ]; then 
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
-      echo "INFECTED: Possible Malicious TinyDNS installed"
+      msg_infected "INFECTED: Possible Malicious TinyDNS installed"
    fi      
 
    ## Linux/Xor.DDoS 
@@ -1481,13 +1547,13 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    if [ "${files}" = "" ]; then
       files="`${ls} ${ROOTDIR}etc/cron.hourly/udev.sh ${ROOTDIR}etc/cron.hourly/gcc.sh 2> /dev/null`" 
       if [ "${files}" = "" ]; then 
-         if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+         if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
       else
-         echo "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
+         msg_infected "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
          echo "${files}"
       fi
    else
-     echo "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
+     msg_infected "INFECTED: Possible Malicious Linux.Xor.DDoS installed"
      echo "${files}"
    fi  
 
@@ -1496,80 +1562,80 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Linux.Proxy.1.0 ... "; fi
 
    if ${egrep} -i mother ${ROOTDIR}etc/passwd >/dev/null 2>&1 ; then 
-      echo "INFECTED: Possible Malicious Linux.Proxy.10 installed"
+      msg_infected "INFECTED: Possible Malicious Linux.Proxy.10 installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    # Linux/CrossRAT 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for CrossRAT ... "; fi
    if ${ls} ${ROOTDIR}usr/var/mediamgrs.jar 2>/dev/null; then 
-      echo "INFECTED: Possible Malicious CrossRAT installed"
+      msg_infected "INFECTED: Possible Malicious CrossRAT installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
    ## Hidden Cobra (IBM AIX) 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Hidden Cobra ... "; fi
    if ${ls} ${ROOTDIR}tmp/.ICE-unix/m*.so ${ROOTDIR}tmp/.ICE-unix/engine.so 2>/dev/null; then 
-      echo "INFECTED: Possible Malicious Hidden Cobra installed"
+      msg_infected "INFECTED: Possible Malicious Hidden Cobra installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi  
 
    ### Rocke Monero Miner
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Rocke Miner ... "; fi
    if [ -f "${ROOTDIR}etc/ld.so.pre" -o -f "${ROOTDIR}etc/xig" ] ; then 
-      echo "INFECTED: Possible Malicious Rocke Miner installed"
+      msg_infected "INFECTED: Possible Malicious Rocke Miner installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi  
 
    ## PWNLNX4 - An LKM Roottkit 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for PWNLNX4 lkm... "; fi
    if [ -d "${ROOTDIR}/uOnlineBuilder64" -o -d "${ROOTDIR}/var/tmp/.1" -o -d "${ROOTDIR}/var/tmp/Linux_Server" ]; then 
-      echo "INFECTED: Possible Malicious PWNLNX4 installed"
+      msg_infected "INFECTED: Possible Malicious PWNLNX4 installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## PWNLNX6 - Another LKM Roottkit 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for PWNLNX6 lkm... "; fi
    if [ -d "${ROOTDIR}/tmp/suterusu" ] ; then 
-      echo "INFECTED: Possible Malicious PWNLNX6 installed"
+      msg_infected "INFECTED: Possible Malicious PWNLNX6 installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## Umbreon Linux Rootkit
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Umbreon lrk... "; fi
    if  ${ls} ${ROOTDIR}usr/share/libc.so.* > /dev/null 2>&1 ; then
-      echo "INFECTED: Possible Malicious UMBREON LRK installed"
+      msg_infected "INFECTED: Possible Malicious UMBREON LRK installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## KINSING.A Backdoor 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Kinsing.a backdoor... "; fi
    if  ${ls} "${ROOTDIR}tmp/kdevtmpfsi" > /dev/null 2>&1 ; then
-      echo "INFECTED: Possible Malicious KINSING.A Backdoor installed"
+      msg_infected "INFECTED: Possible Malicious KINSING.A Backdoor installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## RotaJakiro Backdoor 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for RotaJakiro backdoor... "; fi
    if  ${ls} "${ROOTDIR}bin/systemd-daemon" > /dev/null 2>&1 ; then
-      echo "INFECTED: Possible Malicious JOTAJAKIRO Backdoor installed"
+      msg_infected "INFECTED: Possible Malicious JOTAJAKIRO Backdoor installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## Syslogk LKM rootkit 
@@ -1577,9 +1643,9 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Syslogk LKM rootkit... "; fi
       (${echo} 1> "${ROOTDIR}proc/syslogk") >/dev/null 2>&1
    if  ${ls} "${ROOTDIR}proc/syslogk" > /dev/null 2>&1 ; then
-      echo "INFECTED: Possible Malicious Syslogk LKM rootkit installed"
+      msg_infected "INFECTED: Possible Malicious Syslogk LKM rootkit installed"
    else
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 
    ## Kovid LKM rootkit 
@@ -1589,28 +1655,28 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    for i in 1 2; do 
       ${kill} -SIGCONT 31337 2>/dev/null 
       if  ${ls} "${ROOTDIR}proc/kovid" > /dev/null 2>&1 ; then
-         echo "INFECTED: Possible Malicious Kovid LKM rootkit installed"
+         msg_infected "INFECTED: Possible Malicious Kovid LKM rootkit installed"
          f="Kovid"
       fi
    done
-   [ "${f}" = "" -a "${QUIET}" != "t" ] && echo "nothing found"
+   [ "${f}" = "" -a "${QUIET}" != "t" ] && msg_ok "nothing found"
    
    ## Tsunami DDoS Malware
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Tsunami DDoS Malware.. "; fi
    [ -f "${ROOTDIR}bin/a" -o -f "${ROOTDIR}bin/cls" -o -f "${ROOTDIR}bin/clean" ] && 
-      echo "INFECTED: Possible Tsunami DDoS Malware installed" ||
+      msg_infected "INFECTED: Possible Tsunami DDoS Malware installed" ||
       { 
-          [ "${QUIET}" != "t" ] && echo "nothing found"
+          [ "${QUIET}" != "t" ] && msg_ok "nothing found"
       } 
 
    ## Linux BPF Door 
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for Linux BPF Door.. "; fi
     ${egrep} packet_recvmsg /proc/*/stack >/dev/null 2>&1 && 
-      echo "INFECTED: Possible Linux BPFDoor Malware installed" ||
+      msg_infected "INFECTED: Possible Linux BPFDoor Malware installed" ||
       { 
-          [ "${QUIET}" != "t" ] && echo "nothing found"
+          [ "${QUIET}" != "t" ] && msg_ok "nothing found"
       } 
 
    ## Linux Earth Lusca Backdoor
@@ -1620,12 +1686,12 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
    { 
       if [ "${SYSTEM}" = "Linux" ]; then
          ps -auwx | ${egrep} "kworker/[0-9]*]$" >/dev/null 2>&1 &&
-         echo "INFECTED: Possible Linux Earth Lusca Malware installed" ||
+         msg_infected "INFECTED: Possible Linux Earth Lusca Malware installed" ||
          {
-            [ "${QUIET}" != "t" ] && echo "nothing found"
+            [ "${QUIET}" != "t" ] && msg_ok "nothing found"
          }
          else
-            [ "${QUIET}" != "t" ] && echo "nothing found"
+            [ "${QUIET}" != "t" ] && msg_ok "nothing found"
       fi
     } 
 
@@ -1634,21 +1700,21 @@ ${find} ${ROOTDIR}usr/sbin -name in.slogind`
       printn "Searching for Linux Bootkitty... "; fi
    if [ "${SYSTEM}" = "Linux" ]; then
       ${egrep} "LD_PRELOAD" ${ROOTDIR}etc/grub.d/*  ${ROOTDIR}boot/grub/grub.cfg >/dev/null 2>&1 &&
-      echo "INFECTED: Possible Linux Bootkitty installed" ||
+      msg_infected "INFECTED: Possible Linux Bootkitty installed" ||
       {
-          [ "${QUIET}" != "t" ] && echo "nothing found"
+          [ "${QUIET}" != "t" ] && msg_ok "nothing found"
       }
    else
-     [ "${QUIET}" != "t" ] && echo "nothing found"
+     [ "${QUIET}" != "t" ] && msg_ok "nothing found"
    fi
 
    ### SSH WORM
    if [ "${QUIET}" != "t" ]; then
       printn "Searching for SSH WORM... "; fi
    if [ -d ${ROOTDIR}root/.config/prng ]; then
-      echo "INFECTED: Possible SSH WORM installed" 
+      msg_infected "INFECTED: Possible SSH WORM installed" 
    else
-      [ "${QUIET}" != "t" ] && echo "nothing found"
+      [ "${QUIET}" != "t" ] && msg_ok "nothing found"
    fi
 
 
@@ -1664,7 +1730,7 @@ else
       fileshead="`${find} ${ROOTDIR}tmp ${ROOTDIR}var/tmp ${findargs} -type f -exec head -1 {} \; | ${egrep} '^#!.*php' 2> /dev/null`"
 fi
    if [ "${files}" = "" -a "${fileshead}" = "" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    else
      echo
      echo "${files}"
@@ -1680,13 +1746,13 @@ fi
    if [ ! -z "${SHELL}" -a ! -z "${HOME}" ]; then
       files=`${find} ${ROOTDIR}${HOME} ${findargs} -name '.*history' -size 0`
       [ ! -z "${files}" ] && \
-        echo "Warning: \`${files}' file size is zero"
+        warn_msg "Warning: \`${files}' file size is zero"
       files1=`${find} ${ROOTDIR}${HOME} ${findargs} -name '.*history' \( -links 2 -o -type l \)`
       [ ! -z "${files1}" ] && \
-        echo "Warning: \`${files1}' is linked to another file"
+        warn_msg "Warning: \`${files1}' is linked to another file"
    fi
    if [ -z "${files}" -a -z "${files1}" ]; then
-      if [ "${QUIET}" != "t" ]; then echo "nothing found"; fi
+      if [ "${QUIET}" != "t" ]; then msg_ok "nothing found"; fi
    fi
 }
 
@@ -1749,9 +1815,15 @@ getCMD() {
 }
 
 expertmode_output() {
-    echo "###"
-    echo "### Output of: $1"
-    echo "###"
+    if [ "${USE_COLOR}" = "1" ]; then
+        echo "${COLOR_CYAN}###${COLOR_RESET}"
+        echo "${COLOR_CYAN}### Output of: $1${COLOR_RESET}"
+        echo "${COLOR_CYAN}###${COLOR_RESET}"
+    else
+        echo "###"
+        echo "### Output of: $1"
+        echo "###"
+    fi
     eval $1 2>&1
 #    cat <<EOF
 #`$1 2>&1`
@@ -2202,7 +2274,7 @@ chk_crontab () {
     fi
     # slackware's crontab have a bug
     if  ( ${CMD} -l -u nobody | $egrep [0-9] ) >/dev/null 2>&1 ; then
-        ${echo} "Warning: crontab for nobody found, possible Lupper.Worm... "
+        warn_msg "Warning: crontab for nobody found, possible Lupper.Worm... "
 	if ${CMD} -l -u nobody 2>/dev/null  | ${egrep} $CRONTAB_I_L >/dev/null 2>&1
 	   then
            STATUS=${INFECTED}
@@ -2303,12 +2375,12 @@ chk_ldsopreload() {
       STATUS=${NOT_TESTED}
     fi
     if [ -s /etc/ld.so.preload ]; then
-        echo "WARNING: /etc/ld.so.preload is not empty"
+        warn_msg "WARNING: /etc/ld.so.preload is not empty"
         STATUS=${INFECTED}
     fi
     PRELOAD_PROCS=$(grep -l 'LD_PRELOAD' /proc/[0-9]*/environ 2>/dev/null | wc -l)
     if [ "$PRELOAD_PROCS" -gt 0 ]; then
-        echo "WARNING: LD_PRELOAD found in $PRELOAD_PROCS process(es)"
+        warn_msg "WARNING: LD_PRELOAD found in $PRELOAD_PROCS process(es)"
         STATUS=${INFECTED}
     fi
     return ${STATUS}
@@ -2665,7 +2737,7 @@ rexedcs () {
     CMD=`loc in.rexedcs in.rexedcs $pth`
     if [ "${?}" -ne 0 ]
        then
-        if [ "${QUIET}" != "t" ]; then echo "not found"; fi
+        if [ "${QUIET}" != "t" ]; then msg_ok "not found"; fi
         return ${NOT_FOUND}
     fi
 
@@ -3104,6 +3176,102 @@ printn () {
     fi
 }
 
+# Print message only if verbosity level is high enough
+verbose_msg() {
+    local _level=$1
+    shift
+    if [ "${VERBOSE}" -ge "${_level}" ]; then
+        echo "$@"
+    fi
+}
+
+# Print without newline only if verbosity level is high enough
+# Print a warning message, with yellow color when --color is active
+warn_msg() {
+    if [ "${USE_COLOR}" = "1" ]; then
+        echo "${COLOR_YELLOW}$*${COLOR_RESET}"
+    else
+        echo "$*"
+    fi
+}
+
+# Print a positive/ok message, green when --color is active
+msg_ok() {
+    if [ "${USE_COLOR}" = "1" ]; then
+        echo "${COLOR_GREEN}$*${COLOR_RESET}"
+    else
+        echo "$*"
+    fi
+}
+
+# Print an infected/detected message, red when --color is active
+msg_infected() {
+    if [ "${USE_COLOR}" = "1" ]; then
+        echo "${COLOR_RED}$*${COLOR_RESET}"
+    else
+        echo "$*"
+    fi
+}
+
+# Print a 'not tested' message, yellow when --color is active
+msg_not_tested() {
+    if [ "${USE_COLOR}" = "1" ]; then
+        echo "${COLOR_YELLOW}$*${COLOR_RESET}"
+    else
+        echo "$*"
+    fi
+}
+
+# Print a section header (blue/bold when --color is active)
+section_header() {
+    if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 4 ]; then
+        if [ "${USE_COLOR}" = "1" ]; then
+            echo "${COLOR_BOLD}${COLOR_BLUE}--- $* ---${COLOR_RESET}"
+        else
+            echo "--- $* ---"
+        fi
+    fi
+}
+
+# Map a tool name to its category for section headers
+tool_category() {
+    case "$1" in
+        w55808|scalper|slapper|z2|asp|OSX_RSPLUG)
+            echo "Worm / Exploit Detection"
+            ;;
+        lkm|rexedcs|chkdeleted|getdents64)
+            echo "Kernel & Process Integrity"
+            ;;
+        sniffer|chksockorph|chkpacket|chkbpftool)
+            echo "Network & Socket Monitoring"
+            ;;
+        wted|chkutmp)
+            echo "System Log Integrity"
+            ;;
+        aliens)
+            echo "Rootkit File & Directory Scan"
+            ;;
+        bindshell)
+            echo "Backdoor Detection"
+            ;;
+        *)
+            echo "Other Checks"
+            ;;
+    esac
+}
+
+verbose_printn() {
+    local _level=$1
+    shift
+    if [ "${VERBOSE}" -ge "${_level}" ]; then
+        if `${echo} "a\c" | ${egrep} c >/dev/null 2>&1` ; then
+            ${echo} -n "$@"
+        else
+            ${echo} "$@\c"
+        fi
+    fi
+}
+
 chkxcmd () {
     local p
     p=`loc $1 $1 $chkrkpth`
@@ -3188,9 +3356,26 @@ do
 
         -d)     DEBUG=t;;
 
-        -x)     EXPERT=t;;
+        -x)     VERBOSE=4
+                EXPERT=t;;
 
-        -q)     QUIET=t;;
+        -q)     VERBOSE=1
+                QUIET=t;;
+
+        -v)     VERBOSE=$((VERBOSE + 1));;
+
+        --verbose=*)
+                _val="${1#--verbose=}"
+                case "${_val}" in
+                    [0-9]|[0-9][0-9]) VERBOSE=${_val}
+                        # Backward compatibility
+                        if [ "${VERBOSE}" -eq 4 ]; then EXPERT=t; fi
+                        if [ "${VERBOSE}" -eq 1 ]; then QUIET=t; fi;;
+                    *) echo >&2 "chkrootkit: --verbose requires a numeric argument"
+                       exit 1;;
+                esac;;
+
+        --color) USE_COLOR=1;;
 
         -V)     die chkrootkit version ${CHKROOTKIT_VERSION};;
 
@@ -3211,8 +3396,11 @@ Options:
         -V                show version information and exit
         -l                show available tests and exit
         -d                debug
-        -q                quiet mode
-        -x                expert mode
+        -q                quiet mode (verbosity 1)
+        -v                increase verbosity
+        --verbose=N       set verbosity level (1=quiet, 2=normal, 3=verbose, 4=debug)
+        -x                expert mode (verbosity 4)
+        --color           enable colored output
         -r dir            use dir as the root directory
         -p dir1:dir2:dirN path for the external commands used by chkrootkit
         -n                skip NFS mount points
@@ -3469,7 +3657,33 @@ if [ "${DEBUG}" = "t" ]; then
     set -x
 fi
 
-if [ "${QUIET}" != "t" ]; then
+# Colorize status output
+colorize_status() {
+    local _status=$1
+    local _msg=$2
+    if [ "${USE_COLOR}" = "1" ]; then
+        case ${_status} in
+            0) echo "${COLOR_RED}${_msg}${COLOR_RESET}";;
+            1) echo "${COLOR_GREEN}${_msg}${COLOR_RESET}";;
+            2) echo "${COLOR_YELLOW}${_msg}${COLOR_RESET}";;
+            3) echo "${COLOR_YELLOW}${_msg}${COLOR_RESET}";;
+            4) echo "${COLOR_MAGENTA}${_msg}${COLOR_RESET}";;
+            *) echo "${_msg}";;
+        esac
+    else
+        echo "${_msg}"
+    fi
+}
+
+# Summary counters
+SUMMARY_TOTAL=0
+SUMMARY_INFECTED=0
+SUMMARY_NOTINFECTED=0
+SUMMARY_NOTTESTED=0
+SUMMARY_NOTFOUND=0
+SUMMARY_INFECTED_BUT_DISABLED=0
+
+if [ "${VERBOSE}" -ge 2 ]; then
     echo "ROOTDIR is \`${ROOTDIR}'"
 fi
 
@@ -3479,40 +3693,82 @@ if [ `${id} | ${cut} -d= -f2 | ${cut} -d\( -f1` -ne 0 ]; then
 fi
 
 
+IN_TROJAN_SECTION=0
+IN_TOOLS_SECTION=0
+
 for cmd in ${LIST}
 do
     if echo "${TROJAN}" | \
     ${egrep} "${L_REGEXP}$cmd${R_REGEXP}" > /dev/null 2>&1
     then
-        if [ "${EXPERT}" != "t" -a "${QUIET}" != "t" ]; then
+        if [ "${IN_TROJAN_SECTION}" -eq 0 ]; then
+            section_header "System Binary Integrity Checks"
+            IN_TROJAN_SECTION=1
+        fi
+        if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 4 ]; then
            printn "Checking \`${cmd}'... "
         fi
         chk_${cmd}
         STATUS=$?
-        ### quiet mode
-        if [ "${QUIET}" = "t" ]; then
+        SUMMARY_TOTAL=$((SUMMARY_TOTAL + 1))
+        ### quiet mode (VERBOSE=1)
+        if [ "${VERBOSE}" -eq 1 ]; then
             ### show only INFECTED status
             if [ ${STATUS} -eq 0 ]; then
-                echo "Checking \`${cmd}'... INFECTED"
+                colorize_status ${STATUS} "Checking \`${cmd}'... INFECTED"
+                SUMMARY_INFECTED=$((SUMMARY_INFECTED + 1))
             fi
             continue
         fi
         case $STATUS in
-        0) echo "INFECTED";;
-        1) echo "not infected";;
-        2) echo "not tested";;
-        3) echo "not found";;
-        4) echo "infected but disabled";;
-        5) ;;   ### expert mode
+        0) colorize_status ${STATUS} "INFECTED"
+           SUMMARY_INFECTED=$((SUMMARY_INFECTED + 1));;
+        1) [ "${VERBOSE}" -ge 2 ] && colorize_status ${STATUS} "not infected"
+           SUMMARY_NOTINFECTED=$((SUMMARY_NOTINFECTED + 1));;
+        2) [ "${VERBOSE}" -ge 2 ] && colorize_status ${STATUS} "not tested"
+           SUMMARY_NOTTESTED=$((SUMMARY_NOTTESTED + 1));;
+        3) [ "${VERBOSE}" -ge 2 ] && colorize_status ${STATUS} "not found"
+           SUMMARY_NOTFOUND=$((SUMMARY_NOTFOUND + 1));;
+        4) colorize_status ${STATUS} "infected but disabled"
+           SUMMARY_INFECTED_BUT_DISABLED=$((SUMMARY_INFECTED_BUT_DISABLED + 1));;
+        5) ;;   ### expert mode / debug
         esac
     else
-        ### external tool
-        if [ "${EXPERT}" != "t" -a "${QUIET}" != "t" ]; then
+        ### external tool (from TOOLS list)
+        if [ "${IN_TOOLS_SECTION}" -eq 0 ]; then
+            CURRENT_CATEGORY=
+            IN_TOOLS_SECTION=1
+        fi
+        # determine and track tool category for section headers
+        NEW_CATEGORY=$(tool_category "$cmd")
+        if [ "${NEW_CATEGORY}" != "${CURRENT_CATEGORY}" ]; then
+            section_header "${NEW_CATEGORY}"
+            CURRENT_CATEGORY="${NEW_CATEGORY}"
+        fi
+        if [ "${VERBOSE}" -ge 2 ] && [ "${VERBOSE}" -lt 4 ]; then
             printn "Checking \`$cmd'... "
         fi
         ${cmd}
     fi
 done
+
+### Summary
+if [ "${VERBOSE}" -ge 1 ] && [ "${SUMMARY_TOTAL}" -gt 0 ]; then
+    echo
+    echo "=== Summary ==="
+    echo "  Total tests: ${SUMMARY_TOTAL}"
+    if [ "${SUMMARY_INFECTED}" -gt 0 ]; then
+        colorize_status 0 "  INFECTED: ${SUMMARY_INFECTED}"
+    else
+        [ "${VERBOSE}" -ge 2 ] && colorize_status 1 "  INFECTED: 0"
+    fi
+    [ "${VERBOSE}" -ge 2 ] && colorize_status 1 "  Not infected: ${SUMMARY_NOTINFECTED}"
+    [ "${VERBOSE}" -ge 2 ] && colorize_status 2 "  Not tested: ${SUMMARY_NOTTESTED}"
+    [ "${VERBOSE}" -ge 2 ] && colorize_status 2 "  Not found: ${SUMMARY_NOTFOUND}"
+    if [ "${SUMMARY_INFECTED_BUT_DISABLED}" -gt 0 ]; then
+        colorize_status 4 "  Infected but disabled: ${SUMMARY_INFECTED_BUT_DISABLED}"
+    fi
+fi
 
 
 ### chkrootkit ends here.
